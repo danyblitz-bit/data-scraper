@@ -57,6 +57,7 @@ impl DataScraperApp {
             storage.clone(),
             config.max_concurrent_requests,
             config.request_timeout_secs,
+            config.user_agent.clone(),
         ));
         let jobs = config.jobs.clone();
 
@@ -320,9 +321,15 @@ impl eframe::App for DataScraperApp {
                             let storage = self.storage.clone();
                             let runtime = self.runtime.clone();
                             let to_delete = RefCell::new(None);
-                            self.results_panel.show(ui, &self.results, &job_names, &mut |id| {
-                                *to_delete.borrow_mut() = Some(id);
-                            });
+                            self.results_panel.show(
+                                ui,
+                                &self.results,
+                                &job_names,
+                                &self.config.export_path,
+                                &mut |id| {
+                                    *to_delete.borrow_mut() = Some(id);
+                                },
+                            );
                             if let Some(id) = to_delete.into_inner() {
                                 let storage = storage.clone();
                                 runtime.spawn(async move {
@@ -338,9 +345,11 @@ impl eframe::App for DataScraperApp {
                                 let engine = self.engine.clone();
                                 let max_concurrent = self.config.max_concurrent_requests;
                                 let timeout = self.config.request_timeout_secs;
+                                let ua = self.config.user_agent.clone();
                                 self.runtime.spawn(async move {
                                     engine.set_concurrency(max_concurrent).await;
                                     engine.set_timeout(timeout);
+                                    engine.set_user_agent(ua);
                                 });
                             }
                         }

@@ -15,6 +15,7 @@ pub struct ScraperEngine {
     storage: Arc<RwLock<Storage>>,
     semaphore: Arc<RwLock<Arc<Semaphore>>>,
     timeout_secs: Arc<AtomicU64>,
+    default_ua: Arc<std::sync::RwLock<String>>,
     stats: Arc<RwLock<EngineStats>>,
 }
 
@@ -30,13 +31,14 @@ pub struct EngineStats {
 }
 
 impl ScraperEngine {
-    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32, timeout_secs: u64) -> Self {
+    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32, timeout_secs: u64, user_agent: String) -> Self {
         Self {
             storage,
             semaphore: Arc::new(RwLock::new(Arc::new(Semaphore::new(
                 max_concurrent.max(1) as usize,
             )))),
             timeout_secs: Arc::new(AtomicU64::new(timeout_secs.max(1))),
+            default_ua: Arc::new(std::sync::RwLock::new(user_agent)),
             stats: Arc::new(RwLock::new(EngineStats::default())),
         }
     }
@@ -48,6 +50,10 @@ impl ScraperEngine {
 
     pub fn set_timeout(&self, secs: u64) {
         self.timeout_secs.store(secs.max(1), Ordering::Relaxed);
+    }
+
+    pub fn set_user_agent(&self, ua: String) {
+        *self.default_ua.write().unwrap() = ua;
     }
 
     pub async fn run_job(&self, job: ScrapeJob) -> Result<ScrapeResult> {
@@ -116,9 +122,18 @@ impl ScraperEngine {
 
         let concurrency = job.concurrency.max(1) as usize;
         let pages: Vec<u32> = (1..=total_pages).collect();
+        let timeout_secs = self.timeout_secs.load(Ordering::Relaxed);
+        let effective_ua = {
+            let global = self.default_ua.read().unwrap().clone();
+            job.user_agent.clone().or_else(|| {
+                let ua = global.trim().to_string();
+                if ua.is_empty() { None } else { Some(ua) }
+            })
+        };
 
         let page_results = futures::stream::iter(pages.into_iter().map(|page| {
             let job = job.clone();
+            let effective_ua = effective_ua.clone();
             async move {
                 let page_url = if has_pagination {
                     job.url.replace("{page}", &page.to_string())
@@ -128,8 +143,8 @@ impl ScraperEngine {
                 let resp = fetch_url_with_retry(
                     &page_url,
                     job.proxy.as_deref(),
-                    job.user_agent.as_deref(),
-                    self.timeout_secs.load(Ordering::Relaxed),
+                    effective_ua.as_deref(),
+                    timeout_secs,
                     3,
                     &job.method,
                     job.body.as_deref(),
@@ -225,7 +240,7 @@ mod tests {
     use super::*;
     use crate::storage::Storage;
     use std::collections::HashMap;
-    use std::io::Write;
+    use std::io::{BufRead, Write};
 
     fn demo_job() -> ScrapeJob {
         ScrapeJob {
@@ -271,7 +286,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
 
         let job = demo_job();
         let result = engine.run_job(job).await.unwrap();
@@ -293,7 +308,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
 
         let mut job = demo_job();
         job.id = "json-job-1".into();
@@ -322,7 +337,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
 
         let mut job = demo_job();
         job.id = "post-job-1".into();
@@ -357,7 +372,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
 
         let mut job = demo_job();
         job.id = "pages-job-1".into();
@@ -401,7 +416,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 1);
+        let engine = ScraperEngine::new(storage.clone(), 4, 1, "DataScraper/1.0".into());
 
         let mut job = demo_job();
         job.id = "timeout-job-1".into();
@@ -420,6 +435,79 @@ mod tests {
         let saved = storage.read().await.get_all_results(10).await.unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].status, ScrapeStatus::Failed);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn user_agent_fallback_and_override() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut ua = String::new();
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                            break;
+                        }
+                        if let Some((k, v)) = line.split_once(':') {
+                            if k.trim().eq_ignore_ascii_case("user-agent") {
+                                ua = v.trim().to_string();
+                            }
+                        }
+                    }
+                    let body = format!("{{\"ua\":{{\"value\":\"{}\"}}}}", ua);
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_ua_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 10, "TestAgent/1.0".into());
+
+        let selector = crate::types::Selector {
+            name: "ua".into(),
+            css_selector: "ua".into(),
+            attribute: None,
+            extract: ExtractType::Text,
+        };
+
+        let mut job = demo_job();
+        job.id = "ua-job-1".into();
+        job.url = format!("http://{addr}/");
+        job.selectors = vec![selector.clone()];
+
+        let result = engine.run_job(job.clone()).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(
+            result.data[0].get("value").map(|s| s.as_str()),
+            Some("TestAgent/1.0"),
+            "job without UA should fall back to the global default; got {:?}",
+            result.data[0]
+        );
+
+        job.id = "ua-job-2".into();
+        job.user_agent = Some("JobAgent/2.0".into());
+        let result = engine.run_job(job).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(
+            result.data[0].get("value").map(|s| s.as_str()),
+            Some("JobAgent/2.0"),
+            "per-job UA should override the global default"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

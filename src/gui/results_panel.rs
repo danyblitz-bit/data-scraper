@@ -17,6 +17,7 @@ impl ResultsPanel {
         ui: &mut egui::Ui,
         results: &[ScrapeResult],
         job_names: &[(String, String)],
+        export_path: &str,
         on_delete: &mut dyn FnMut(i64),
     ) {
         ui.heading("Results");
@@ -91,10 +92,10 @@ impl ResultsPanel {
             ));
             if !filtered.is_empty() {
                 if ui.button("Export CSV").clicked() {
-                    self.export(filtered.clone(), "csv");
+                    self.export(filtered.clone(), "csv", export_path);
                 }
                 if ui.button("Export JSON").clicked() {
-                    self.export(filtered.clone(), "json");
+                    self.export(filtered.clone(), "json", export_path);
                 }
             }
             if let Some(ref path) = self.last_export {
@@ -201,10 +202,11 @@ impl ResultsPanel {
         }
     }
 
-    fn export(&mut self, filtered: Vec<&ScrapeResult>, format: &str) {
+    fn export(&mut self, filtered: Vec<&ScrapeResult>, format: &str, export_path: &str) {
         let results: Vec<ScrapeResult> = filtered.into_iter().cloned().collect();
         let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let path = format!("exports/export_{}.{}", ts, format);
+        let base = export_path.trim_end_matches(['/', '\\']);
+        let path = format!("{}/export_{}.{}", base, ts, format);
 
         let result = match format {
             "csv" => export_to_csv(&results, &path),
