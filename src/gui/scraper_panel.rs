@@ -1,7 +1,13 @@
 use eframe::egui::{self, Color32, Frame, Margin, Stroke};
+use std::sync::mpsc::Receiver;
 
 use crate::engine::EngineStats;
 use crate::types::*;
+
+pub struct TestOutcome {
+    pub job_id: String,
+    pub result: Result<ScrapeResult, String>,
+}
 
 #[derive(Default)]
 pub struct ScraperPanel {
@@ -14,6 +20,8 @@ pub struct ScraperPanel {
     pub show_edit_dialog: bool,
     pub jobs_modified: bool,
     pub editor_just_opened: bool,
+    pub test_rx: Option<Receiver<TestOutcome>>,
+    pub test_preview: Option<TestOutcome>,
 }
 
 impl ScraperPanel {
@@ -24,6 +32,7 @@ impl ScraperPanel {
         stats: &EngineStats,
         on_run_job: &mut dyn FnMut(String),
         on_run_all: &mut dyn FnMut(),
+        on_test_job: &mut dyn FnMut(ScrapeJob),
     ) {
         ui.heading("Scraper Jobs");
         ui.separator();
@@ -160,11 +169,16 @@ impl ScraperPanel {
         }
 
         if self.show_edit_dialog {
-            self.show_job_editor(ui, jobs);
+            self.show_job_editor(ui, jobs, on_test_job);
         }
     }
 
-    fn show_job_editor(&mut self, ui: &mut egui::Ui, jobs: &mut Vec<ScrapeJob>) {
+    fn show_job_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        jobs: &mut Vec<ScrapeJob>,
+        on_test_job: &mut dyn FnMut(ScrapeJob),
+    ) {
         let mut job = match self.editing_job.take() {
             Some(j) => j,
             None => return,
@@ -172,6 +186,7 @@ impl ScraperPanel {
 
         let mut save = false;
         let mut cancel = false;
+        let mut request_test = false;
 
         if self.editor_just_opened {
             self.header_rows = job
@@ -343,7 +358,60 @@ impl ScraperPanel {
                 });
 
                 ui.add_space(16.0);
+                ui.separator();
+                ui.heading("Test Result");
+                match &self.test_preview {
+                    Some(outcome) if outcome.job_id == job.id => match &outcome.result {
+                        Ok(r) => {
+                            ui.colored_label(
+                                Color32::LIGHT_GREEN,
+                                format!("{} records", r.data.len()),
+                            );
+                            if !r.data.is_empty() {
+                                let keys: Vec<&String> = r.data[0].keys().collect();
+                                egui::Grid::new("test_result_grid")
+                                    .striped(true)
+                                    .min_col_width(120.0)
+                                    .show(ui, |ui| {
+                                        for k in &keys {
+                                            ui.strong(*k);
+                                        }
+                                        ui.end_row();
+                                        for row in r.data.iter().take(10) {
+                                            for k in &keys {
+                                                ui.label(row.get(*k).cloned().unwrap_or_default());
+                                            }
+                                            ui.end_row();
+                                        }
+                                        if r.data.len() > 10 {
+                                            ui.colored_label(
+                                                Color32::GRAY,
+                                                format!("... and {} more", r.data.len() - 10),
+                                            );
+                                        }
+                                    });
+                            }
+                        }
+                        Err(e) => {
+                            ui.colored_label(
+                                Color32::from_rgb(231, 76, 60),
+                                format!("Test failed: {}", e),
+                            );
+                        }
+                    },
+                    _ => {
+                        ui.colored_label(
+                            Color32::GRAY,
+                            "Click 'Test Selectors' to run the selectors against the URL",
+                        );
+                    }
+                }
+
+                ui.add_space(16.0);
                 ui.horizontal(|ui| {
+                    if ui.button("Test Selectors").clicked() {
+                        request_test = true;
+                    }
                     if ui.button("Save").clicked() {
                         save = true;
                     }
@@ -353,7 +421,10 @@ impl ScraperPanel {
                 });
             });
 
-        if save {
+        if request_test {
+            self.editing_job = Some(job.clone());
+            on_test_job(job);
+        } else if save {
             if !job.name.is_empty() && !job.url.is_empty() {
                 job.headers = self
                     .header_rows

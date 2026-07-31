@@ -1,15 +1,18 @@
 use eframe::egui;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 
 use crate::engine::{EngineStats, ScraperEngine, Scheduler};
 use crate::gui::{ResultsPanel, ScraperPanel, SettingsPanel};
+use crate::gui::scraper_panel::TestOutcome;
 use crate::storage::Storage;
 use crate::types::{AppConfig, ScrapeJob, ScrapeResult, Theme};
 
 enum AppCommand {
     RunJob(String),
     RunAllJobs,
+    TestJob(ScrapeJob),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -37,6 +40,7 @@ pub struct DataScraperApp {
     pub engine: Arc<ScraperEngine>,
     pub storage: Arc<RwLock<Storage>>,
     pub runtime: tokio::runtime::Handle,
+    pub test_tx: Sender<TestOutcome>,
 }
 
 impl DataScraperApp {
@@ -56,6 +60,8 @@ impl DataScraperApp {
         let scheduler = Scheduler::new(engine.clone(), storage.clone());
         let rt_handle = runtime_handle.clone();
 
+        let (test_tx, test_rx) = std::sync::mpsc::channel();
+
         let mut app = Self {
             current_view: AppView::Dashboard,
             last_view: AppView::Dashboard,
@@ -72,7 +78,9 @@ impl DataScraperApp {
             engine,
             storage,
             runtime: runtime_handle,
+            test_tx,
         };
+        app.scraper_panel.test_rx = Some(test_rx);
 
         app.load_jobs_from_db();
         app.refresh_stats();
@@ -167,6 +175,26 @@ impl DataScraperApp {
             log::info!("All jobs completed: {} success, {} failed", success, failed);
         });
     }
+
+    fn test_job(&mut self, mut job: ScrapeJob) {
+        job.max_pages = Some(1);
+        let engine = self.engine.clone();
+        let tx = self.test_tx.clone();
+        let job_id = job.id.clone();
+        self.runtime.spawn(async move {
+            let outcome = match engine.test_job(&job).await {
+                Ok(r) => TestOutcome {
+                    job_id,
+                    result: Ok(r),
+                },
+                Err(e) => TestOutcome {
+                    job_id,
+                    result: Err(e.to_string()),
+                },
+            };
+            let _ = tx.send(outcome);
+        });
+    }
 }
 
 impl eframe::App for DataScraperApp {
@@ -223,6 +251,13 @@ impl eframe::App for DataScraperApp {
                         }
                         AppView::Scraper => {
                             use std::cell::RefCell;
+                            loop {
+                                let recv = self.scraper_panel.test_rx.as_ref().unwrap().try_recv();
+                                match recv {
+                                    Ok(outcome) => self.scraper_panel.test_preview = Some(outcome),
+                                    Err(_) => break,
+                                }
+                            }
                             let commands = RefCell::new(Vec::new());
                             self.scraper_panel.show(
                                 ui,
@@ -230,11 +265,13 @@ impl eframe::App for DataScraperApp {
                                 &self.stats,
                                 &mut |job_id| commands.borrow_mut().push(AppCommand::RunJob(job_id)),
                                 &mut || commands.borrow_mut().push(AppCommand::RunAllJobs),
+                                &mut |job| commands.borrow_mut().push(AppCommand::TestJob(job)),
                             );
                             for cmd in commands.into_inner() {
                                 match cmd {
                                     AppCommand::RunJob(job_id) => self.run_job(job_id),
                                     AppCommand::RunAllJobs => self.run_all_jobs(),
+                                    AppCommand::TestJob(job) => self.test_job(job),
                                 }
                             }
                             if self.scraper_panel.jobs_modified {

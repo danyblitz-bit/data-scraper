@@ -168,6 +168,10 @@ impl ScraperEngine {
         })
     }
 
+    pub async fn test_job(&self, job: &ScrapeJob) -> Result<ScrapeResult> {
+        self.execute_job(job).await
+    }
+
     pub async fn run_all_jobs(&self, jobs: &[ScrapeJob]) -> Vec<Result<ScrapeResult>> {
         let mut handles = Vec::new();
         for job in jobs.iter().filter(|j| j.enabled) {
