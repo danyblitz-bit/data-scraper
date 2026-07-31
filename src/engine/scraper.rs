@@ -360,18 +360,24 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_real_scrape() {
+        let addr = serve_responses("text/html", 1, |_| next_link_page_html("Test Author"));
+
         let tmp = std::env::temp_dir().join(format!("ds_test_{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
 
-        let job = demo_job();
+        let mut job = demo_job();
+        job.url = format!("http://{addr}/");
         let result = engine.run_job(job).await.unwrap();
 
         assert_eq!(result.status, ScrapeStatus::Success);
         assert!(!result.data.is_empty(), "no records extracted");
-        assert!(result.data[0].contains_key("author"));
+        assert_eq!(
+            result.data[0].get("author").map(|s| s.as_str()),
+            Some("Test Author")
+        );
 
         let saved = storage.read().await.get_all_results(10).await.unwrap();
         assert_eq!(saved.len(), 1);
@@ -382,6 +388,11 @@ mod tests {
 
     #[tokio::test]
     async fn end_to_end_json_api() {
+        let addr = serve_responses("application/json", 1, |_| {
+            r#"[{"id":1,"title":"Post One","userId":1},{"id":2,"title":"Post Two","userId":2}]"#
+                .to_string()
+        });
+
         let tmp = std::env::temp_dir().join(format!("ds_json_{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
@@ -391,7 +402,7 @@ mod tests {
         let mut job = demo_job();
         job.id = "json-job-1".into();
         job.name = "Posts API".into();
-        job.url = "https://jsonplaceholder.typicode.com/posts".into();
+        job.url = format!("http://{addr}/");
         job.selectors = vec![crate::types::Selector {
             name: "item".into(),
             css_selector: "*".into(),
@@ -402,14 +413,18 @@ mod tests {
 
         assert_eq!(result.status, ScrapeStatus::Success);
         assert!(!result.data.is_empty(), "no JSON records extracted");
-        assert!(result.data[0].contains_key("title"));
-        assert!(result.data[0].contains_key("userId"));
+        assert_eq!(result.data[0].get("title").map(|s| s.as_str()), Some("Post One"));
+        assert_eq!(result.data[0].get("userId").map(|s| s.as_str()), Some("1"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
     async fn post_with_json_body() {
+        let addr = serve_responses("application/json", 1, |_| {
+            r#"{"json":{"hello":"world"}}"#.to_string()
+        });
+
         let tmp = std::env::temp_dir().join(format!("ds_post_{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
@@ -419,7 +434,7 @@ mod tests {
         let mut job = demo_job();
         job.id = "post-job-1".into();
         job.name = "Echo POST".into();
-        job.url = "https://postman-echo.com/post".into();
+        job.url = format!("http://{addr}/");
         job.method = HttpMethod::Post;
         job.body = Some("{\"hello\":\"world\"}".into());
         job.selectors = vec![crate::types::Selector {
@@ -444,6 +459,15 @@ mod tests {
 
     #[tokio::test]
     async fn json_pagination() {
+        let addr = serve_responses("application/json", 2, |path| {
+            let page = if path.contains("_page=2") { 2 } else { 1 };
+            let start = (page - 1) * 10 + 1;
+            let posts: Vec<String> = (start..start + 10)
+                .map(|i| format!(r#"{{"id":{},"title":"Post {}","userId":1}}"#, i, i))
+                .collect();
+            format!("[{}]", posts.join(","))
+        });
+
         let tmp = std::env::temp_dir().join(format!("ds_pages_{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
@@ -453,7 +477,7 @@ mod tests {
         let mut job = demo_job();
         job.id = "pages-job-1".into();
         job.name = "Paginated API".into();
-        job.url = "https://jsonplaceholder.typicode.com/posts?_page={page}".into();
+        job.url = format!("http://{addr}/?_page={{page}}");
         job.max_pages = Some(2);
         job.selectors = vec![crate::types::Selector {
             name: "item".into(),
@@ -554,6 +578,42 @@ mod tests {
             author
         );
         format!("<html><body>{}</body></html>", quote.repeat(10))
+    }
+
+    fn serve_responses(
+        content_type: &'static str,
+        count: usize,
+        respond: impl Fn(&str) -> String + Send + 'static,
+    ) -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..count {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    let _ = reader.read_line(&mut line);
+                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let body = respond(&path);
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        content_type,
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+        addr
     }
 
     #[tokio::test]

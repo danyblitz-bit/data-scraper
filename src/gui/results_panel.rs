@@ -19,6 +19,7 @@ impl ResultsPanel {
         job_names: &[(String, String)],
         export_path: &str,
         on_delete: &mut dyn FnMut(i64),
+        on_clear: &mut dyn FnMut(),
     ) {
         ui.heading("Results");
         ui.separator();
@@ -44,6 +45,11 @@ impl ResultsPanel {
                     self.selected_job_filter = None;
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Clear Results").clicked() {
+                    on_clear();
+                }
+            });
         });
 
         ui.add_space(8.0);

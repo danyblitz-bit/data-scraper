@@ -22,6 +22,7 @@ pub struct ScraperPanel {
     pub editor_just_opened: bool,
     pub test_rx: Option<Receiver<TestOutcome>>,
     pub test_preview: Option<TestOutcome>,
+    pub save_error: Option<String>,
 }
 
 impl ScraperPanel {
@@ -190,6 +191,7 @@ impl ScraperPanel {
         let mut request_test = false;
 
         if self.editor_just_opened {
+            self.save_error = None;
             self.header_rows = job
                 .headers
                 .iter()
@@ -437,6 +439,9 @@ impl ScraperPanel {
                 }
 
                 ui.add_space(16.0);
+                if let Some(err) = &self.save_error {
+                    ui.colored_label(Color32::from_rgb(231, 76, 60), err);
+                }
                 ui.horizontal(|ui| {
                     if ui.button("Test Selectors").clicked() {
                         request_test = true;
@@ -454,7 +459,25 @@ impl ScraperPanel {
             self.editing_job = Some(job.clone());
             on_test_job(job);
         } else if save {
-            if !job.name.is_empty() && !job.url.is_empty() {
+            job.name = job.name.trim().to_string();
+            job.url = job.url.trim().to_string();
+            self.save_error = if job.name.is_empty() {
+                Some("Name is required".to_string())
+            } else if job.url.is_empty() {
+                Some("URL is required".to_string())
+            } else if job.selectors.is_empty() {
+                Some("Add at least one selector (first = row selector)".to_string())
+            } else if job
+                .selectors
+                .iter()
+                .any(|s| s.name.trim().is_empty() || s.css_selector.trim().is_empty())
+            {
+                Some("Every selector needs a name and a CSS path".to_string())
+            } else {
+                None
+            };
+
+            if self.save_error.is_none() {
                 job.headers = self
                     .header_rows
                     .iter()

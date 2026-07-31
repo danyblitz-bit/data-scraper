@@ -127,6 +127,16 @@ impl Storage {
         Ok(())
     }
 
+    pub async fn prune_results(&self, keep: i64) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM results WHERE id NOT IN \
+             (SELECT id FROM results ORDER BY timestamp DESC LIMIT ?1)",
+            params![keep],
+        )?;
+        Ok(())
+    }
+
     pub async fn get_all_jobs(&self) -> Result<Vec<ScrapeJob>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT config FROM jobs ORDER BY name")?;

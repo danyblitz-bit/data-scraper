@@ -89,6 +89,7 @@ impl DataScraperApp {
         app.scraper_panel.test_rx = Some(test_rx);
 
         app.load_jobs_from_db();
+        app.prune_old_results();
         app.refresh_stats();
 
         rt_handle.block_on(scheduler.start());
@@ -100,6 +101,14 @@ impl DataScraperApp {
         let storage = self.storage.clone();
         self.jobs = self.runtime.block_on(async {
             storage.read().await.get_all_jobs().await.unwrap_or_default()
+        });
+    }
+
+    fn prune_old_results(&mut self) {
+        let storage = self.storage.clone();
+        self.runtime.block_on(async move {
+            // ponytail: fixed cap at startup; add a user setting if retention needs tuning
+            let _ = storage.write().await.prune_results(2000).await;
         });
     }
 
@@ -322,6 +331,7 @@ impl eframe::App for DataScraperApp {
                             let storage = self.storage.clone();
                             let runtime = self.runtime.clone();
                             let to_delete = RefCell::new(None);
+                            let to_clear = RefCell::new(false);
                             self.results_panel.show(
                                 ui,
                                 &self.results,
@@ -330,7 +340,17 @@ impl eframe::App for DataScraperApp {
                                 &mut |id| {
                                     *to_delete.borrow_mut() = Some(id);
                                 },
+                                &mut || {
+                                    *to_clear.borrow_mut() = true;
+                                },
                             );
+                            if *to_clear.borrow() {
+                                let storage = storage.clone();
+                                runtime.spawn(async move {
+                                    let _ = storage.write().await.prune_results(0).await;
+                                });
+                                self.refresh_results();
+                            }
                             if let Some(id) = to_delete.into_inner() {
                                 let storage = storage.clone();
                                 runtime.spawn(async move {
