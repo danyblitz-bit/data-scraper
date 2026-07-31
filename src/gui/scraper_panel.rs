@@ -112,11 +112,7 @@ impl ScraperPanel {
                                                 Color32::LIGHT_GREEN,
                                                 format!("Last run: {} records", last.data.len()),
                                             ),
-                                            ScrapeStatus::Partial => (
-                                                Color32::LIGHT_YELLOW,
-                                                "Last run: partial".to_string(),
-                                            ),
-                                            _ => (
+                                            ScrapeStatus::Failed => (
                                                 Color32::from_rgb(231, 76, 60),
                                                 "Last run: failed".to_string(),
                                             ),

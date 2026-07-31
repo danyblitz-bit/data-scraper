@@ -72,15 +72,11 @@ pub struct ScrapeResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ScrapeStatus {
     Success,
-    Partial,
     Failed,
-    Running,
-    Pending,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub jobs: Vec<ScrapeJob>,
     pub max_concurrent_requests: u32,
     pub request_timeout_secs: u64,
     pub user_agent: String,
@@ -94,7 +90,6 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            jobs: Vec::new(),
             max_concurrent_requests: 10,
             request_timeout_secs: 30,
             user_agent: "DataScraper/1.0 (+https://github.com/datascraper)".into(),

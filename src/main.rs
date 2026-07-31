@@ -18,9 +18,7 @@ fn load_config() -> AppConfig {
 }
 
 pub fn save_config(config: &AppConfig) {
-    let mut cfg = config.clone();
-    cfg.jobs.clear();
-    if let Ok(s) = serde_yaml::to_string(&cfg) {
+    if let Ok(s) = serde_yaml::to_string(config) {
         let _ = std::fs::write(CONFIG_PATH, s);
     }
 }

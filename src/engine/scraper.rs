@@ -267,7 +267,7 @@ impl ScraperEngine {
 
         let resp = fetch_result?;
 
-        let is_json = resp
+        let ct_is_json = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
@@ -281,23 +281,28 @@ impl ScraperEngine {
             stats.total_bytes_fetched += fetched;
         }
 
+        let text = String::from_utf8_lossy(&bytes);
+        let path = job
+            .selectors
+            .first()
+            .map(|s| s.css_selector.clone())
+            .unwrap_or_default();
+        // ponytail: sniff when the API lies about Content-Type (text/plain + JSON body)
+        let is_json = ct_is_json
+            || (!path.is_empty()
+                && (path == "*" || path.contains('/') || scraper::Selector::parse(&path).is_err())
+                && serde_json::from_str::<serde_json::Value>(&text).is_ok());
+
         let mut records = Vec::new();
         let mut next_link = None;
         if is_json {
-            let text = String::from_utf8_lossy(&bytes);
             let json = parse_json(&text)?;
-            let path = job
-                .selectors
-                .first()
-                .map(|s| s.css_selector.clone())
-                .unwrap_or_default();
             records.extend(extract_json_value(&json, &path));
         } else {
-            let html = String::from_utf8_lossy(&bytes);
-            let result = parse_html(&html, url, &job.id, &job.selectors);
+            let result = parse_html(&text, url, &job.id, &job.selectors);
             records.extend(result.data);
             if let Some(sel) = next_sel {
-                next_link = find_next_link(&html, url, sel);
+                next_link = find_next_link(&text, url, sel);
             }
         }
 
@@ -729,6 +734,57 @@ mod tests {
         assert!(stats.successful_requests >= 1, "successes should be counted");
         assert!(stats.failed_requests >= 1, "failures should be counted");
         assert!(stats.total_requests >= 2, "each page fetch should count as a request");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn json_detected_via_sniffing() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = r#"[{"title":"Sniffed"}]"#;
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut stream = stream;
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut drain = String::new();
+                loop {
+                    drain.clear();
+                    if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                        break;
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_sniff_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+
+        let mut job = demo_job();
+        job.id = "sniff-job-1".into();
+        job.url = format!("http://{addr}/");
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(
+            result.data[0].get("title").map(|s| s.as_str()),
+            Some("Sniffed"),
+            "JSON body with text/plain content-type should be parsed as JSON"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

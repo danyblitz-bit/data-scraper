@@ -201,10 +201,7 @@ fn map_result_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
     let status_str: String = row.get(5)?;
     let status = match status_str.as_str() {
         "Success" => ScrapeStatus::Success,
-        "Partial" => ScrapeStatus::Partial,
-        "Failed" => ScrapeStatus::Failed,
-        "Running" => ScrapeStatus::Running,
-        _ => ScrapeStatus::Pending,
+        _ => ScrapeStatus::Failed,
     };
 
     Ok(ScrapeResult {

@@ -43,6 +43,7 @@ pub struct DataScraperApp {
     pub runtime: tokio::runtime::Handle,
     pub test_tx: Sender<TestOutcome>,
     pub last_results_refresh: std::time::Instant,
+    pub last_stats_refresh: std::time::Instant,
 }
 
 impl DataScraperApp {
@@ -60,8 +61,6 @@ impl DataScraperApp {
             config.user_agent.clone(),
             config.export_path.clone(),
         ));
-        let jobs = config.jobs.clone();
-
         let scheduler = Scheduler::new(engine.clone(), storage.clone());
         let rt_handle = runtime_handle.clone();
 
@@ -71,7 +70,7 @@ impl DataScraperApp {
             current_view: AppView::Dashboard,
             last_view: AppView::Dashboard,
             config,
-            jobs,
+            jobs: Vec::new(),
             results: Vec::new(),
             stats: EngineStats::default(),
             total_jobs: 0,
@@ -85,6 +84,7 @@ impl DataScraperApp {
             runtime: runtime_handle,
             test_tx,
             last_results_refresh: std::time::Instant::now(),
+            last_stats_refresh: std::time::Instant::now(),
         };
         app.scraper_panel.test_rx = Some(test_rx);
 
@@ -220,7 +220,10 @@ impl eframe::App for DataScraperApp {
             self.current_view == AppView::Dashboard && self.current_view != self.last_view;
         let entering_results = self.current_view == AppView::Results && self.current_view != self.last_view;
         self.last_view = self.current_view.clone();
-        self.refresh_stats();
+        if self.last_stats_refresh.elapsed() >= std::time::Duration::from_secs(1) {
+            self.last_stats_refresh = std::time::Instant::now();
+            self.refresh_stats();
+        }
 
         match self.config.theme {
             Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),

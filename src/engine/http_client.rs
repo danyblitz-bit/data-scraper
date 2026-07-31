@@ -42,12 +42,7 @@ fn build_client(
     builder = builder.default_headers(headers);
 
     if let Some(proxy_url) = proxy {
-        let proxy = Proxy::all(proxy_url)?;
-        if proxy_url.starts_with("socks") {
-            builder = builder.proxy(proxy);
-        } else {
-            builder = builder.proxy(proxy);
-        }
+        builder = builder.proxy(Proxy::all(proxy_url)?);
     }
 
     Ok(builder.build()?)

@@ -31,6 +31,8 @@ impl Scheduler {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(30));
             loop {
+                // ponytail: interval fires immediately and last_runs starts empty, so every
+                // interval job runs once at startup (fresh data on launch), then on schedule.
                 ticker.tick().await;
                 let jobs: Vec<ScrapeJob> = match storage.read().await.get_all_jobs().await {
                     Ok(jobs) => jobs,
