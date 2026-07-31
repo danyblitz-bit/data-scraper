@@ -41,6 +41,7 @@ pub struct DataScraperApp {
     pub storage: Arc<RwLock<Storage>>,
     pub runtime: tokio::runtime::Handle,
     pub test_tx: Sender<TestOutcome>,
+    pub last_results_refresh: std::time::Instant,
 }
 
 impl DataScraperApp {
@@ -79,6 +80,7 @@ impl DataScraperApp {
             storage,
             runtime: runtime_handle,
             test_tx,
+            last_results_refresh: std::time::Instant::now(),
         };
         app.scraper_panel.test_rx = Some(test_rx);
 
@@ -281,7 +283,10 @@ impl eframe::App for DataScraperApp {
                         }
                         AppView::Results => {
                             use std::cell::RefCell;
-                            if entering_results {
+                            if entering_results
+                                || self.last_results_refresh.elapsed() >= std::time::Duration::from_secs(2)
+                            {
+                                self.last_results_refresh = std::time::Instant::now();
                                 self.refresh_results();
                             }
                             let job_names: Vec<(String, String)> =

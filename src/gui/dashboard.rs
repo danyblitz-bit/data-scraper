@@ -49,7 +49,7 @@ pub fn show_dashboard(ui: &mut egui::Ui, stats: &EngineStats, total_jobs: u64, t
     ui.separator();
     ui.add_space(10.0);
     ui.heading("Quick Actions");
-    ui.label("Use the sidebar to navigate between sections.");
+    ui.label("Use the top bar to navigate between sections.");
 }
 
 fn show_stat_card(ui: &mut egui::Ui, card: &StatCard) {
