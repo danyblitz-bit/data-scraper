@@ -238,19 +238,41 @@ impl eframe::App for DataScraperApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.colored_label(egui::Color32::GRAY, "v0.1.0");
                     ui.separator();
-                    if ui.button("Dashboard").clicked() {
-                        self.current_view = AppView::Dashboard;
+                    let narrow = ui.available_width() < 480.0;
+                    if narrow {
+                        ui.menu_button("⋮", |ui| {
+                            if ui.button("Dashboard").clicked() {
+                                ui.close();
+                                self.current_view = AppView::Dashboard;
+                            }
+                            if ui.button("Scraper Jobs").clicked() {
+                                ui.close();
+                                self.current_view = AppView::Scraper;
+                            }
+                            if ui.button("Results").clicked() {
+                                ui.close();
+                                self.current_view = AppView::Results;
+                            }
+                            if ui.button("Settings").clicked() {
+                                ui.close();
+                                self.current_view = AppView::Settings;
+                            }
+                        });
+                    } else {
+                        ui.label("View:");
+                        if ui.button("Dashboard").clicked() {
+                            self.current_view = AppView::Dashboard;
+                        }
+                        if ui.button("Scraper Jobs").clicked() {
+                            self.current_view = AppView::Scraper;
+                        }
+                        if ui.button("Results").clicked() {
+                            self.current_view = AppView::Results;
+                        }
+                        if ui.button("Settings").clicked() {
+                            self.current_view = AppView::Settings;
+                        }
                     }
-                    if ui.button("Scraper Jobs").clicked() {
-                        self.current_view = AppView::Scraper;
-                    }
-                    if ui.button("Results").clicked() {
-                        self.current_view = AppView::Results;
-                    }
-                    if ui.button("Settings").clicked() {
-                        self.current_view = AppView::Settings;
-                    }
-                    ui.label("View:");
                 });
             });
         });
