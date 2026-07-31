@@ -13,6 +13,7 @@ pub struct ScraperPanel {
     pub show_edit_dialog: bool,
     pub log_messages: Vec<String>,
     pub jobs_modified: bool,
+    pub editor_just_opened: bool,
 }
 
 impl ScraperPanel {
@@ -49,6 +50,7 @@ impl ScraperPanel {
                 };
                 self.editing_job = Some(job);
                 self.show_edit_dialog = true;
+                self.editor_just_opened = true;
             }
             if ui.button("Run All Jobs").clicked() {
                 on_run_all();
@@ -126,6 +128,7 @@ impl ScraperPanel {
                 if let Some(job) = jobs.get(idx) {
                     self.editing_job = Some(job.clone());
                     self.show_edit_dialog = true;
+                    self.editor_just_opened = true;
                 }
             }
 
@@ -159,7 +162,11 @@ impl ScraperPanel {
                     .min_col_width(100.0)
                     .show(ui, |ui| {
                         ui.label("Name:");
-                        ui.text_edit_singleline(&mut job.name);
+                        let name_field = ui.text_edit_singleline(&mut job.name);
+                        if self.editor_just_opened {
+                            name_field.request_focus();
+                            self.editor_just_opened = false;
+                        }
                         ui.end_row();
                         ui.label("URL:");
                         ui.text_edit_singleline(&mut job.url);
