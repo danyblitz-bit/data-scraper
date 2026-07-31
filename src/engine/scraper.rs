@@ -1315,4 +1315,30 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn test_resolve_next_url_empty_returns_none() {
+        assert_eq!(ScraperEngine::resolve_next_url("", "https://example.com"), None);
+    }
+
+    #[test]
+    fn test_resolve_next_url_absolute_returned_as_is() {
+        assert_eq!(
+            ScraperEngine::resolve_next_url("https://other.com/page", "https://example.com"),
+            Some("https://other.com/page".into())
+        );
+    }
+
+    #[test]
+    fn test_resolve_next_url_relative_resolved_against_base() {
+        assert_eq!(
+            ScraperEngine::resolve_next_url("/page/2", "https://example.com/path/1"),
+            Some("https://example.com/page/2".into())
+        );
+    }
+
+    #[test]
+    fn test_resolve_next_url_malformed_base_returns_none() {
+        assert_eq!(ScraperEngine::resolve_next_url("/next", "not a url"), None);
+    }
 }

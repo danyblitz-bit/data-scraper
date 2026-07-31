@@ -100,6 +100,21 @@ mod tests {
         assert!(content.contains(",hello"), "{}", content);
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn test_export_to_json_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("ds_json_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("out.json").to_str().unwrap().to_string();
+        let result = result_with(&[("name", "alice"), ("score", "42")]);
+        export_to_json(&[result], &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0]["name"], "alice");
+        assert_eq!(parsed[0]["score"], "42");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
 
 pub fn export_to_json(results: &[ScrapeResult], file_path: &str) -> Result<()> {

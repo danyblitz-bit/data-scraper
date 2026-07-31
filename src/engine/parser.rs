@@ -400,4 +400,53 @@ mod tests {
         assert_eq!(extract_json_string(&value, "missing"), None);
         assert_eq!(extract_json_string(&value, "links/number"), None);
     }
+
+    #[test]
+    fn test_extract_value_html_mode() {
+        use scraper::Html;
+        let doc = Html::parse_document("<div><p>Hello <b>world</b></p></div>");
+        let sel = scraper::Selector::parse("p").unwrap();
+        let element = doc.select(&sel).next().unwrap();
+        let s = crate::types::Selector {
+            name: "test".into(),
+            css_selector: "p".into(),
+            extract: ExtractType::Html,
+        };
+        assert_eq!(extract_value(&element, &s, "https://example.com"), "Hello <b>world</b>");
+    }
+
+    #[test]
+    fn test_extract_value_attribute_mode() {
+        use scraper::Html;
+        let doc = Html::parse_document("<a href=\"/page/2\" data-id=\"42\">next</a>");
+        let sel = scraper::Selector::parse("a").unwrap();
+        let element = doc.select(&sel).next().unwrap();
+        let s = crate::types::Selector {
+            name: "test".into(),
+            css_selector: "a".into(),
+            extract: ExtractType::Attribute("data-id".into()),
+        };
+        assert_eq!(extract_value(&element, &s, "https://example.com"), "42");
+    }
+
+    #[test]
+    fn test_extract_value_attribute_missing_returns_empty() {
+        use scraper::Html;
+        let doc = Html::parse_document("<a href=\"/page\">link</a>");
+        let sel = scraper::Selector::parse("a").unwrap();
+        let element = doc.select(&sel).next().unwrap();
+        let s = crate::types::Selector {
+            name: "test".into(),
+            css_selector: "a".into(),
+            extract: ExtractType::Attribute("data-id".into()),
+        };
+        assert_eq!(extract_value(&element, &s, "https://example.com"), "");
+    }
+
+    #[test]
+    fn test_parse_json_error_path() {
+        assert!(parse_json("not json at all").is_err());
+        assert!(parse_json("").is_err());
+        assert!(parse_json("{truncated").is_err());
+    }
 }
