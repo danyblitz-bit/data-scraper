@@ -1,5 +1,6 @@
 use eframe::egui::{self, Color32, Frame, Margin};
 
+use crate::storage::export::{export_to_csv, export_to_json};
 use crate::types::ScrapeResult;
 
 #[derive(Default)]
@@ -7,6 +8,7 @@ pub struct ResultsPanel {
     pub search_query: String,
     pub selected_job_filter: Option<String>,
     pub selected_result: Option<usize>,
+    pub last_export: Option<String>,
 }
 
 impl ResultsPanel {
@@ -86,6 +88,18 @@ impl ResultsPanel {
                 filtered.len(),
                 total_records
             ));
+            if !filtered.is_empty() {
+                if ui.button("Export CSV").clicked() {
+                    self.export(filtered.clone(), "csv");
+                }
+                if ui.button("Export JSON").clicked() {
+                    self.export(filtered.clone(), "json");
+                }
+            }
+            if let Some(ref path) = self.last_export {
+                ui.separator();
+                ui.colored_label(Color32::LIGHT_GREEN, format!("Saved: {}", path));
+            }
         });
 
         ui.add_space(8.0);
@@ -166,5 +180,26 @@ impl ResultsPanel {
                     ui.add_space(4.0);
                 }
             });
+    }
+
+    fn export(&mut self, filtered: Vec<&ScrapeResult>, format: &str) {
+        let results: Vec<ScrapeResult> = filtered.into_iter().cloned().collect();
+        let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let path = format!("exports/export_{}.{}", ts, format);
+
+        let result = match format {
+            "csv" => export_to_csv(&results, &path),
+            _ => export_to_json(&results, &path),
+        };
+
+        match result {
+            Ok(_) => {
+                let abs = std::path::Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| std::path::PathBuf::from(&path));
+                self.last_export = Some(abs.to_string_lossy().to_string());
+            }
+            Err(e) => self.last_export = Some(format!("Export failed: {}", e)),
+        }
     }
 }
