@@ -417,7 +417,24 @@ mod tests {
     use crate::storage::Storage;
     use std::collections::HashMap;
     use std::io::{BufRead, Write};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TempDir(std::path::PathBuf);
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            Self(std::env::temp_dir().join(format!("ds_{prefix}_{}", uuid::Uuid::new_v4())))
+        }
+        fn str_path(&self) -> &str { self.0.to_str().unwrap() }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+
+    fn test_engine(tmp: &TempDir) -> (Arc<RwLock<Storage>>, ScraperEngine) {
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        (storage, engine)
+    }
 
     fn demo_job() -> ScrapeJob {
         ScrapeJob {
@@ -459,11 +476,8 @@ mod tests {
     async fn end_to_end_real_scrape() {
         let addr = serve_responses("text/html", 1, |_| next_link_page_html("Test Author"));
 
-        let tmp = std::env::temp_dir().join(format!("ds_test_{}", uuid::Uuid::new_v4()));
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        let tmp = TempDir::new("test");
+        let (storage, engine) = test_engine(&tmp);
 
         let mut job = demo_job();
         job.url = format!("http://{addr}/");
@@ -479,8 +493,6 @@ mod tests {
         let saved = storage.read().await.get_all_results(10).await.unwrap();
         assert_eq!(saved.len(), 1);
         assert!(!saved[0].data.is_empty());
-
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
@@ -490,11 +502,8 @@ mod tests {
                 .to_string()
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_json_{}", uuid::Uuid::new_v4()));
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        let tmp = TempDir::new("json");
+        let (_storage, engine) = test_engine(&tmp);
 
         let mut job = demo_job();
         job.id = "json-job-1".into();
@@ -512,8 +521,6 @@ mod tests {
         assert!(!result.data.is_empty(), "no JSON records extracted");
         assert_eq!(result.data[0].get("title").map(|s| s.as_str()), Some("Post One"));
         assert_eq!(result.data[0].get("userId").map(|s| s.as_str()), Some("1"));
-
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
@@ -877,11 +884,11 @@ mod tests {
     async fn duplicate_run_is_rejected() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let accepted = Arc::new(AtomicBool::new(false));
-        let accepted_srv = accepted.clone();
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let notify_srv = notify.clone();
         std::thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
-                accepted_srv.store(true, Ordering::SeqCst);
+                notify_srv.notify_one();
                 let mut stream = stream;
                 let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
                 let mut drain = String::new();
@@ -920,9 +927,7 @@ mod tests {
         let job_first = job.clone();
         let spawn_engine = engine.clone();
         let first = tokio::spawn(async move { spawn_engine.run_job(job_first).await });
-        while !accepted.load(Ordering::SeqCst) {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        notify.notified().await;
 
         let second = engine.run_job(job.clone()).await;
         assert!(
