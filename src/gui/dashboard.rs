@@ -101,7 +101,7 @@ pub fn show_dashboard(
             ui.horizontal(|ui| {
                 ui.colored_label(Color32::LIGHT_BLUE, &job_name);
                 ui.separator();
-                ui.label(format!("{} records", r.data.len()));
+                ui.label(format!("{} records", r.record_count));
                 ui.separator();
                 ui.label(&r.timestamp.format("%Y-%m-%d %H:%M").to_string());
             });

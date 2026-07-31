@@ -45,6 +45,8 @@ pub struct DataScraperApp {
     pub test_tx: Sender<TestOutcome>,
     pub last_results_refresh: std::time::Instant,
     pub last_stats_refresh: std::time::Instant,
+    pub selected_detail: Option<ScrapeResult>,
+    pub last_selected_id: Option<i64>,
 }
 
 impl DataScraperApp {
@@ -88,6 +90,8 @@ impl DataScraperApp {
             test_tx,
             last_results_refresh: std::time::Instant::now(),
             last_stats_refresh: std::time::Instant::now(),
+            selected_detail: None,
+            last_selected_id: None,
         };
         app.scraper_panel.test_rx = Some(test_rx);
 
@@ -109,7 +113,7 @@ impl DataScraperApp {
     pub fn refresh_results(&mut self) {
         let storage = self.storage.clone();
         self.results = self.runtime.block_on(async {
-            storage.read().await.get_all_results(500).await.unwrap_or_default()
+            storage.read().await.get_results_meta(500).await.unwrap_or_default()
         });
     }
 
@@ -332,23 +336,60 @@ impl eframe::App for DataScraperApp {
                             let runtime = self.runtime.clone();
                             let to_delete = RefCell::new(None);
                             let to_clear = RefCell::new(false);
+                            let export_req = RefCell::new(None::<(Vec<i64>, String)>);
                             self.results_panel.show(
                                 ui,
                                 &self.results,
                                 &job_names,
-                                &self.config.export_path,
+                                self.selected_detail.as_ref(),
                                 &mut |id| {
                                     *to_delete.borrow_mut() = Some(id);
                                 },
                                 &mut || {
                                     *to_clear.borrow_mut() = true;
                                 },
+                                &mut |ids, fmt| {
+                                    *export_req.borrow_mut() = Some((ids, fmt));
+                                },
                             );
+                            // lazy detail: fetch the full row only when the
+                            // selection changes (local SQLite read, fast)
+                            let sel_id = self.results_panel.selected_result.and_then(|i| self.results.get(i)).map(|r| r.id);
+                            if sel_id != self.last_selected_id {
+                                self.last_selected_id = sel_id;
+                                self.selected_detail = match sel_id {
+                                    Some(id) => self.runtime.block_on(async {
+                                        storage.read().await.get_result_by_id(id).await.unwrap_or(None)
+                                    }),
+                                    None => None,
+                                };
+                            }
+                            if let Some((ids, fmt)) = export_req.into_inner() {
+                                let export_path = self.config.export_path.clone();
+                                let rows = self.runtime.block_on(async {
+                                    let all = storage.read().await.get_all_results(500).await.unwrap_or_default();
+                                    all.into_iter().filter(|r| ids.contains(&r.id)).collect::<Vec<_>>()
+                                });
+                                let path = crate::gui::results_panel::export_path_for(&export_path, &fmt);
+                                let out = match fmt.as_str() {
+                                    "csv" => crate::storage::export::export_to_csv(&rows, &path),
+                                    _ => crate::storage::export::export_to_json(&rows, &path),
+                                };
+                                self.results_panel.last_export = Some(match out {
+                                    Ok(_) => std::path::Path::new(&path)
+                                        .canonicalize()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or(path),
+                                    Err(e) => format!("Export failed: {}", e),
+                                });
+                            }
                             if *to_clear.borrow() {
                                 let storage = storage.clone();
                                 runtime.spawn(async move {
                                     let _ = storage.write().await.prune_results(0).await;
                                 });
+                                self.selected_detail = None;
+                                self.last_selected_id = None;
                                 self.refresh_results();
                             }
                             if let Some(id) = to_delete.into_inner() {
@@ -356,6 +397,10 @@ impl eframe::App for DataScraperApp {
                                 runtime.spawn(async move {
                                     let _ = storage.write().await.delete_result(id).await;
                                 });
+                                if self.last_selected_id == Some(id) {
+                                    self.selected_detail = None;
+                                    self.last_selected_id = None;
+                                }
                                 self.refresh_results();
                             }
                         }

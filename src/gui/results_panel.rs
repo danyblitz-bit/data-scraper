@@ -1,6 +1,5 @@
 use eframe::egui::{self, Color32, Frame, Margin};
 
-use crate::storage::export::{export_to_csv, export_to_json};
 use crate::types::{ScrapeResult, ScrapeStatus};
 
 #[derive(Default)]
@@ -17,9 +16,10 @@ impl ResultsPanel {
         ui: &mut egui::Ui,
         results: &[ScrapeResult],
         job_names: &[(String, String)],
-        export_path: &str,
+        detail: Option<&ScrapeResult>,
         on_delete: &mut dyn FnMut(i64),
         on_clear: &mut dyn FnMut(),
+        on_export: &mut dyn FnMut(Vec<i64>, String),
     ) {
         ui.heading("Results");
         ui.separator();
@@ -88,7 +88,7 @@ impl ResultsPanel {
             })
             .collect();
 
-        let total_records: usize = filtered.iter().map(|r| r.data.len()).sum();
+        let total_records: usize = filtered.iter().map(|r| r.record_count).sum();
 
         ui.horizontal(|ui| {
             ui.label(format!(
@@ -98,10 +98,12 @@ impl ResultsPanel {
             ));
             if !filtered.is_empty() {
                 if ui.button("Export CSV").clicked() {
-                    self.export(filtered.clone(), "csv", export_path);
+                    let ids: Vec<i64> = filtered.iter().map(|r| r.id).collect();
+                    on_export(ids, "csv".to_string());
                 }
                 if ui.button("Export JSON").clicked() {
-                    self.export(filtered.clone(), "json", export_path);
+                    let ids: Vec<i64> = filtered.iter().map(|r| r.id).collect();
+                    on_export(ids, "json".to_string());
                 }
             }
             if let Some(ref path) = self.last_export {
@@ -136,7 +138,7 @@ impl ResultsPanel {
                                     .unwrap_or_else(|| result.job_id.clone());
                                 ui.colored_label(Color32::LIGHT_BLUE, &job_name);
                                 ui.separator();
-                                ui.label(format!("{} records", result.data.len()));
+                                ui.label(format!("{} records", result.record_count));
                                 ui.separator();
                                 ui.label(format!("{}ms", result.duration_ms));
                                 if result.status == ScrapeStatus::Failed {
@@ -157,9 +159,11 @@ impl ResultsPanel {
                                 if let Some(ref err) = result.error {
                                     ui.colored_label(Color32::from_rgb(231, 76, 60), err);
                                 }
-                                if !result.data.is_empty() {
-                                    ui.add_space(4.0);
-                                    let first = &result.data[0];
+                                let show = detail.filter(|d| d.id == result.id);
+                                if let Some(full) = show {
+                                    if !full.data.is_empty() {
+                                        ui.add_space(4.0);
+                                        let first = &full.data[0];
                     let mut table = egui::Grid::new(format!("table_{}", i))
                         .striped(true)
                         .min_col_width(120.0);
@@ -171,31 +175,32 @@ impl ResultsPanel {
                             ),
                         );
                     }
-                                    table.show(ui, |ui| {
-                                        for key in &keys {
-                                            ui.strong(*key);
-                                        }
-                                        ui.end_row();
-
-                                        let max_rows = 20.min(result.data.len());
-                                        for row in 0..max_rows {
+                                        table.show(ui, |ui| {
                                             for key in &keys {
-                                                ui.label(
-                                                    result.data[row]
-                                                        .get(*key)
-                                                        .cloned()
-                                                        .unwrap_or_default(),
-                                                );
+                                                ui.strong(*key);
                                             }
                                             ui.end_row();
-                                        }
-                                        if result.data.len() > max_rows {
-                                            ui.colored_label(
-                                                Color32::GRAY,
-                                                format!("... and {} more rows", result.data.len() - max_rows),
-                                            );
-                                        }
-                                    });
+
+                                            let max_rows = 20.min(full.data.len());
+                                            for row in 0..max_rows {
+                                                for key in &keys {
+                                                    ui.label(
+                                                        full.data[row]
+                                                            .get(*key)
+                                                            .cloned()
+                                                            .unwrap_or_default(),
+                                                    );
+                                                }
+                                                ui.end_row();
+                                            }
+                                            if full.data.len() > max_rows {
+                                                ui.colored_label(
+                                                    Color32::GRAY,
+                                                    format!("... and {} more rows", full.data.len() - max_rows),
+                                                );
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         });
@@ -207,26 +212,10 @@ impl ResultsPanel {
             on_delete(id);
         }
     }
+}
 
-    fn export(&mut self, filtered: Vec<&ScrapeResult>, format: &str, export_path: &str) {
-        let results: Vec<ScrapeResult> = filtered.into_iter().cloned().collect();
-        let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let base = export_path.trim_end_matches(['/', '\\']);
-        let path = format!("{}/export_{}.{}", base, ts, format);
-
-        let result = match format {
-            "csv" => export_to_csv(&results, &path),
-            _ => export_to_json(&results, &path),
-        };
-
-        match result {
-            Ok(_) => {
-                let abs = std::path::Path::new(&path)
-                    .canonicalize()
-                    .unwrap_or_else(|_| std::path::PathBuf::from(&path));
-                self.last_export = Some(abs.to_string_lossy().to_string());
-            }
-            Err(e) => self.last_export = Some(format!("Export failed: {}", e)),
-        }
-    }
+pub fn export_path_for(export_path: &str, format: &str) -> String {
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let base = export_path.trim_end_matches(['/', '\\']);
+    format!("{}/export_{}.{}", base, ts, format)
 }

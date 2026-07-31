@@ -106,6 +106,7 @@ impl ScraperEngine {
                         error: Some(e.to_string()),
                         duration_ms: 0,
                         bytes_fetched: 0,
+                        record_count: 0,
                     };
                     failed = Some(f.clone());
                     f
@@ -238,6 +239,7 @@ impl ScraperEngine {
 
         let elapsed = start.elapsed();
         let is_empty = all_data.is_empty();
+        let record_count = all_data.len();
 
         // ponytail: partial results are kept and the run is marked Failed with a
         // summary; only a run that produced no data at all stays a hard error
@@ -271,6 +273,7 @@ impl ScraperEngine {
             error,
             duration_ms: elapsed.as_millis() as u64,
             bytes_fetched: fetched_bytes,
+            record_count,
         })
     }
 

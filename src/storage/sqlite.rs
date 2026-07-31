@@ -153,6 +153,34 @@ impl Storage {
         Ok(results)
     }
 
+    /// List rows without their data payload: cheap enough to poll every frame
+    /// tick; the full row is loaded on demand via get_result_by_id.
+    pub async fn get_results_meta(&self, limit: i64) -> Result<Vec<ScrapeResult>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, job_id, url, timestamp, status, error, duration_ms, bytes_fetched,
+                    COALESCE(json_array_length(data), 0)
+             FROM results ORDER BY timestamp DESC LIMIT ?1",
+        )?;
+
+        let results = stmt
+            .query_map(params![limit], map_meta_row)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
+
+    pub async fn get_result_by_id(&self, result_id: i64) -> Result<Option<ScrapeResult>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, job_id, url, timestamp, data, status, error, duration_ms, bytes_fetched
+             FROM results WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![result_id], map_result_row)?;
+        Ok(rows.next().transpose()?)
+    }
+
     pub async fn save_job(&self, job: &ScrapeJob) -> Result<()> {
         let conn = self.conn.lock();
         // UPSERT: preserves created_at across edits (INSERT OR REPLACE reset it)
@@ -258,6 +286,7 @@ impl Storage {
 fn map_result_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
     let data_str: String = row.get(4)?;
     let data: Vec<HashMap<String, String>> = serde_json::from_str(&data_str).unwrap_or_default();
+    let record_count = data.len();
     let status_str: String = row.get(5)?;
     let status = match status_str.as_str() {
         "Success" => ScrapeStatus::Success,
@@ -275,6 +304,28 @@ fn map_result_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
         error: row.get(6)?,
         duration_ms: row.get::<_, i64>(7)? as u64,
         bytes_fetched: row.get::<_, i64>(8)? as u64,
+        record_count,
+    })
+}
+
+fn map_meta_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
+    let status_str: String = row.get(4)?;
+    let status = match status_str.as_str() {
+        "Success" => ScrapeStatus::Success,
+        _ => ScrapeStatus::Failed,
+    };
+    Ok(ScrapeResult {
+        id: row.get(0)?,
+        job_id: row.get(1)?,
+        url: row.get(2)?,
+        timestamp: NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S")
+            .unwrap_or_default(),
+        data: Vec::new(),
+        status,
+        error: row.get(5)?,
+        duration_ms: row.get::<_, i64>(6)? as u64,
+        bytes_fetched: row.get::<_, i64>(7)? as u64,
+        record_count: row.get::<_, i64>(8)? as usize,
     })
 }
 
@@ -310,6 +361,7 @@ mod tests {
     use crate::types::ScrapeResult;
 
     fn make_result(job_id: &str, records: Vec<HashMap<String, String>>) -> ScrapeResult {
+        let record_count = records.len();
         ScrapeResult {
             id: 0,
             job_id: job_id.into(),
@@ -320,6 +372,7 @@ mod tests {
             error: None,
             duration_ms: 0,
             bytes_fetched: 0,
+            record_count,
         }
     }
 
@@ -484,6 +537,31 @@ mod tests {
         assert_eq!(all[0].data[0].get("a").map(|s| s.as_str()), Some("1"));
         let jobs = s.get_all_jobs().await.unwrap();
         assert_eq!(jobs.len(), 1, "old jobs survive the migration");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_meta_list_and_detail_fetch() {
+        let tmp = std::env::temp_dir().join(format!("ds_meta_{}", uuid::Uuid::new_v4()));
+        let mut s = Storage::new(tmp.to_str().unwrap()).unwrap();
+        save_job_row(&s, "j6").await;
+        s.save_result(&make_result("j6", vec![record(&[("a", "1")]), record(&[("b", "2")])]))
+            .await
+            .unwrap();
+
+        let meta = s.get_results_meta(10).await.unwrap();
+        assert_eq!(meta.len(), 1);
+        assert!(meta[0].data.is_empty(), "meta rows carry no data payload");
+        assert_eq!(meta[0].record_count, 2, "count comes from the query");
+
+        let full = s.get_result_by_id(meta[0].id).await.unwrap().unwrap();
+        assert_eq!(full.data.len(), 2, "detail fetch returns the payload");
+        assert_eq!(full.record_count, 2);
+
+        assert!(
+            s.get_result_by_id(9999).await.unwrap().is_none(),
+            "missing id returns None"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

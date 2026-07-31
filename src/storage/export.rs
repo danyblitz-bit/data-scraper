@@ -75,6 +75,7 @@ mod tests {
             error: None,
             duration_ms: 0,
             bytes_fetched: 0,
+            record_count: 1,
         }
     }
 

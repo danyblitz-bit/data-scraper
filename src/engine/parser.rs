@@ -41,6 +41,7 @@ pub fn parse_html(
     }
 
     let is_empty = records.is_empty();
+    let record_count = records.len();
     ScrapeResult {
         id: 0,
         job_id: job_id.to_string(),
@@ -59,6 +60,7 @@ pub fn parse_html(
         },
         duration_ms: start.elapsed().as_millis() as u64,
         bytes_fetched: html.len() as u64,
+        record_count,
     }
 }
 

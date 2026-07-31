@@ -71,6 +71,7 @@ pub struct ScrapeResult {
     pub error: Option<String>,
     pub duration_ms: u64,
     pub bytes_fetched: u64,
+    pub record_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
