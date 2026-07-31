@@ -805,6 +805,14 @@ mod tests {
             if let Ok((stream, _)) = listener.accept() {
                 accepted_srv.store(true, Ordering::SeqCst);
                 let mut stream = stream;
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut drain = String::new();
+                loop {
+                    drain.clear();
+                    if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                        break;
+                    }
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1500));
                 let body = r#"[{"id":1}]"#;
                 let resp = format!(
