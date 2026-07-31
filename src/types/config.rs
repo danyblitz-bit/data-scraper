@@ -28,13 +28,19 @@ pub struct Selector {
     pub extract: ExtractType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExtractType {
     Text,
     Html,
     Attribute(String),
     Link,
     Image,
+}
+
+impl Default for ExtractType {
+    fn default() -> Self {
+        Self::Text
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

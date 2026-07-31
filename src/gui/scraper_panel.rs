@@ -9,6 +9,8 @@ pub struct ScraperPanel {
     pub new_job_url: String,
     pub new_selector_name: String,
     pub new_selector_css: String,
+    pub new_selector_extract: ExtractType,
+    pub new_selector_attr: String,
     pub editing_job: Option<ScrapeJob>,
     pub show_edit_dialog: bool,
     pub log_messages: Vec<String>,
@@ -218,6 +220,10 @@ impl ScraperPanel {
                         ui.text_edit_singleline(&mut sel.name);
                         ui.label("CSS/Path:");
                         ui.text_edit_singleline(&mut sel.css_selector);
+                        extract_combo(ui, format!("extract_{}", i), &mut sel.extract);                        if let ExtractType::Attribute(ref mut attr) = sel.extract {
+                            ui.label("attr:");
+                            ui.text_edit_singleline(attr);
+                        }
                         if ui.button("X").clicked() {
                             delete_selector = Some(i);
                         }
@@ -232,16 +238,24 @@ impl ScraperPanel {
                     ui.text_edit_singleline(&mut self.new_selector_name);
                     ui.label("CSS/Path:");
                     ui.text_edit_singleline(&mut self.new_selector_css);
+                    extract_combo(ui, "extract_new".to_string(), &mut self.new_selector_extract);
+                    if let ExtractType::Attribute(ref mut attr) = self.new_selector_extract {
+                        ui.label("attr:");
+                        ui.text_edit_singleline(&mut self.new_selector_attr);
+                        attr.clone_from(&self.new_selector_attr);
+                    }
                     if ui.button("Add Selector").clicked() {
                         if !self.new_selector_name.is_empty() && !self.new_selector_css.is_empty() {
                             job.selectors.push(Selector {
                                 name: self.new_selector_name.clone(),
                                 css_selector: self.new_selector_css.clone(),
                                 attribute: None,
-                                extract: ExtractType::Text,
+                                extract: self.new_selector_extract.clone(),
                             });
                             self.new_selector_name.clear();
                             self.new_selector_css.clear();
+                            self.new_selector_attr.clear();
+                            self.new_selector_extract = ExtractType::Text;
                         }
                     }
                 });
@@ -276,4 +290,29 @@ impl ScraperPanel {
             self.editing_job = Some(job);
         }
     }
+}
+
+fn extract_combo(ui: &mut egui::Ui, id: String, extract: &mut ExtractType) {
+    let label = match extract {
+        ExtractType::Text => "Text".to_string(),
+        ExtractType::Html => "HTML".to_string(),
+        ExtractType::Attribute(a) if a.is_empty() => "Attribute".to_string(),
+        ExtractType::Attribute(a) => format!("Attr: {}", a),
+        ExtractType::Link => "Link".to_string(),
+        ExtractType::Image => "Image".to_string(),
+    };
+
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(label)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(extract, ExtractType::Text, "Text");
+            ui.selectable_value(extract, ExtractType::Html, "HTML");
+            ui.selectable_value(extract, ExtractType::Link, "Link");
+            ui.selectable_value(extract, ExtractType::Image, "Image");
+            ui.selectable_value(
+                extract,
+                ExtractType::Attribute(String::new()),
+                "Attribute",
+            );
+        });
 }
