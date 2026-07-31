@@ -82,9 +82,7 @@ impl ResultsPanel {
                 let q = self.search_query.to_lowercase();
                 r.url.to_lowercase().contains(&q)
                     || r.job_id.to_lowercase().contains(&q)
-                    || r.data.iter().any(|d| {
-                        d.values().any(|v| v.to_lowercase().contains(&q))
-                    })
+                    || r.timestamp.format("%Y-%m-%d %H:%M").to_string().to_lowercase().contains(&q)
             })
             .collect();
 
