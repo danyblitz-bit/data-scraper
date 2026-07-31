@@ -252,6 +252,9 @@ impl eframe::App for DataScraperApp {
                         }
                         AppView::Settings => {
                             self.settings_panel.show(ui, &mut self.config);
+                            if self.settings_panel.changed {
+                                crate::save_config(&self.config);
+                            }
                         }
                     }
                 });
