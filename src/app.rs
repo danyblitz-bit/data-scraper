@@ -35,6 +35,7 @@ pub struct DataScraperApp {
     pub total_jobs: u64,
     pub total_results: u64,
     pub total_bytes: u64,
+    pub avg_duration_ms: f64,
     pub scraper_panel: ScraperPanel,
     pub results_panel: ResultsPanel,
     pub settings_panel: SettingsPanel,
@@ -77,6 +78,7 @@ impl DataScraperApp {
             total_jobs: 0,
             total_results: 0,
             total_bytes: 0,
+            avg_duration_ms: 0.0,
             scraper_panel: ScraperPanel::default(),
             results_panel: ResultsPanel::default(),
             settings_panel: SettingsPanel::default(),
@@ -136,14 +138,15 @@ impl DataScraperApp {
             let s = engine.get_stats().await;
             let stats_result = storage.read().await.get_stats_summary().await;
             match stats_result {
-                Ok((tj, tr, tb, _)) => (s, tj, tr, tb),
-                Err(_) => (s, 0, 0, 0),
+                Ok((tj, tr, tb, avg)) => (s, tj, tr, tb, avg),
+                Err(_) => (s, 0, 0, 0, 0.0),
             }
         });
         self.stats = stats.0;
         self.total_jobs = stats.1;
         self.total_results = stats.2;
         self.total_bytes = stats.3;
+        self.avg_duration_ms = stats.4;
     }
 
     pub fn run_job(&mut self, job_id: String) {
@@ -270,6 +273,7 @@ impl eframe::App for DataScraperApp {
                                 self.total_jobs,
                                 self.total_results,
                                 self.total_bytes,
+                                self.avg_duration_ms,
                                 &job_names,
                                 &self.results,
                                 &mut || commands.borrow_mut().push(AppCommand::RunAllJobs),

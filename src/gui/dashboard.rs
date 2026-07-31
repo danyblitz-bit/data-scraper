@@ -25,6 +25,7 @@ pub fn show_dashboard(
     total_jobs: u64,
     total_results: u64,
     total_bytes: u64,
+    avg_duration_ms: f64,
     job_names: &[(String, String)],
     recent: &[ScrapeResult],
     on_run_all: &mut dyn FnMut(),
@@ -34,6 +35,11 @@ pub fn show_dashboard(
     ui.separator();
     ui.add_space(10.0);
 
+    let avg_label = if avg_duration_ms >= 1000.0 {
+        format!("{:.2} s", avg_duration_ms / 1000.0)
+    } else {
+        format!("{:.0} ms", avg_duration_ms)
+    };
     let cards = vec![
         StatCard::new("Total Jobs", &total_jobs.to_string(), Color32::from_rgb(52, 152, 219)),
         StatCard::new("Total Results", &total_results.to_string(), Color32::from_rgb(46, 204, 113)),
@@ -41,6 +47,7 @@ pub fn show_dashboard(
         StatCard::new("Successful Requests", &stats.successful_requests.to_string(), Color32::from_rgb(39, 174, 96)),
         StatCard::new("Failed Requests", &stats.failed_requests.to_string(), Color32::from_rgb(231, 76, 60)),
         StatCard::new("Total Fetched", &format_bytes(total_bytes), Color32::from_rgb(243, 156, 18)),
+        StatCard::new("Avg Run Duration", &avg_label, Color32::from_rgb(26, 188, 156)),
     ];
 
     egui::Grid::new("stats_grid")

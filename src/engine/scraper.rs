@@ -332,6 +332,8 @@ impl ScraperEngine {
             }
         }
         let fetched = bytes.len() as u64;
+        // bytes are counted after content-decoding (gzip/brotli), i.e. the data
+        // size the parser sees, not the wire size
         {
             let mut stats = self.stats.write().await;
             stats.total_bytes_fetched += fetched;

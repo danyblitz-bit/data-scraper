@@ -42,6 +42,12 @@ impl Scheduler {
                     }
                 };
 
+                // ponytail: drop bookkeeping for deleted jobs, checked every tick
+                last_runs
+                    .write()
+                    .await
+                    .retain(|id, _| jobs.iter().any(|j| j.id == *id));
+
                 let now = chrono::Utc::now().naive_utc();
                 for job in jobs.iter().filter(|j| j.enabled && j.interval_minutes.unwrap_or(0) > 0) {
                     let minutes = job.interval_minutes.unwrap_or(0) as i64;

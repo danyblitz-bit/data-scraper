@@ -48,12 +48,6 @@ impl SettingsPanel {
                 }
                 ui.end_row();
 
-                ui.label("Database Path:");
-                if ui.text_edit_singleline(&mut config.database_path).changed() {
-                    self.changed = true;
-                }
-                ui.end_row();
-
                 ui.label("Export Path:");
                 if ui.text_edit_singleline(&mut config.export_path).changed() {
                     self.changed = true;
