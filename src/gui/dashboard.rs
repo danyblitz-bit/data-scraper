@@ -52,37 +52,68 @@ pub fn show_dashboard(
         StatCard::new("Avg Run Duration", &avg_label, Color32::from_rgb(26, 188, 156)),
     ];
 
-    egui::Grid::new("stats_grid")
-        .min_col_width(180.0)
-        .max_col_width(250.0)
-        .spacing([16.0, 12.0])
-        .show(ui, |ui| {
-            for chunk in cards.chunks(3) {
-                for card in chunk {
-                    show_stat_card(ui, card);
+    let narrow = ui.available_width() < 700.0;
+
+    if narrow {
+        egui::ScrollArea::horizontal()
+            .max_height(140.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for card in &cards {
+                        show_stat_card(ui, card);
+                    }
+                });
+            });
+    } else {
+        egui::Grid::new("stats_grid")
+            .min_col_width(180.0)
+            .max_col_width(250.0)
+            .spacing([16.0, 12.0])
+            .show(ui, |ui| {
+                for chunk in cards.chunks(3) {
+                    for card in chunk {
+                        show_stat_card(ui, card);
+                    }
+                    ui.end_row();
                 }
-                ui.end_row();
-            }
-        });
+            });
+    }
 
     ui.add_space(20.0);
     ui.separator();
     ui.add_space(10.0);
     ui.heading("Quick Actions");
-    ui.horizontal(|ui| {
-        if ui.button("Run All Jobs").clicked() {
-            on_run_all();
-        }
-        if ui.button("Scraper Jobs").clicked() {
-            on_navigate(crate::app::AppView::Scraper);
-        }
-        if ui.button("Results").clicked() {
-            on_navigate(crate::app::AppView::Results);
-        }
-        if ui.button("Settings").clicked() {
-            on_navigate(crate::app::AppView::Settings);
-        }
-    });
+    if narrow {
+        ui.vertical(|ui| {
+            if ui.add(egui::Button::new("Run All Jobs").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                on_run_all();
+            }
+            if ui.add(egui::Button::new("Scraper Jobs").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                on_navigate(crate::app::AppView::Scraper);
+            }
+            if ui.add(egui::Button::new("Results").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                on_navigate(crate::app::AppView::Results);
+            }
+            if ui.add(egui::Button::new("Settings").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                on_navigate(crate::app::AppView::Settings);
+            }
+        });
+    } else {
+        ui.horizontal(|ui| {
+            if ui.button("Run All Jobs").clicked() {
+                on_run_all();
+            }
+            if ui.button("Scraper Jobs").clicked() {
+                on_navigate(crate::app::AppView::Scraper);
+            }
+            if ui.button("Results").clicked() {
+                on_navigate(crate::app::AppView::Results);
+            }
+            if ui.button("Settings").clicked() {
+                on_navigate(crate::app::AppView::Settings);
+            }
+        });
+    }
 
     ui.add_space(16.0);
     ui.separator();
