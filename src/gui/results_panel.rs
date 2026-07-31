@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, Frame, Margin};
 
 use crate::storage::export::{export_to_csv, export_to_json};
-use crate::types::ScrapeResult;
+use crate::types::{ScrapeResult, ScrapeStatus};
 
 #[derive(Default)]
 pub struct ResultsPanel {
@@ -132,6 +132,10 @@ impl ResultsPanel {
                                 ui.label(format!("{} records", result.data.len()));
                                 ui.separator();
                                 ui.label(format!("{}ms", result.duration_ms));
+                                if result.status == ScrapeStatus::Failed {
+                                    ui.separator();
+                                    ui.colored_label(Color32::from_rgb(231, 76, 60), "failed");
+                                }
                                 ui.separator();
                                 ui.label(&result.timestamp.format("%Y-%m-%d %H:%M").to_string());
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -143,6 +147,9 @@ impl ResultsPanel {
                             if is_selected {
                                 ui.add_space(4.0);
                                 ui.label(&result.url);
+                                if let Some(ref err) = result.error {
+                                    ui.colored_label(Color32::from_rgb(231, 76, 60), err);
+                                }
                                 if !result.data.is_empty() {
                                     ui.add_space(4.0);
                                     let first = &result.data[0];

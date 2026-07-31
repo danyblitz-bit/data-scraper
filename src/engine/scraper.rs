@@ -49,6 +49,7 @@ impl ScraperEngine {
 
         let result = self.execute_job(&job).await;
 
+        let mut failed: Option<ScrapeResult> = None;
         {
             let mut stats = self.stats.write().await;
             stats.active_jobs -= 1;
@@ -65,7 +66,7 @@ impl ScraperEngine {
                 }
                 Err(e) => {
                     stats.failed_requests += 1;
-                    ScrapeResult {
+                    let f = ScrapeResult {
                         id: 0,
                         job_id: job.id.clone(),
                         url: job.url.clone(),
@@ -75,15 +76,18 @@ impl ScraperEngine {
                         error: Some(e.to_string()),
                         duration_ms: 0,
                         bytes_fetched: 0,
-                    }
+                    };
+                    failed = Some(f.clone());
+                    f
                 }
             };
             stats.last_runs.insert(job.id.clone(), run);
         }
 
-        if let Ok(ref scrape_result) = result {
-            let mut storage = self.storage.write().await;
-            storage.save_result(scrape_result).await?;
+        if let Some(f) = failed {
+            self.storage.write().await.save_result(&f).await?;
+        } else if let Ok(ref scrape_result) = result {
+            self.storage.write().await.save_result(scrape_result).await?;
         }
 
         result
