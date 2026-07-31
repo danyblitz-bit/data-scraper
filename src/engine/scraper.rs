@@ -40,6 +40,8 @@ impl ScraperEngine {
 
         let _permit = self.semaphore.acquire().await?;
 
+        self.storage.write().await.save_job(&job).await?;
+
         let result = self.execute_job(&job).await;
 
         {
@@ -96,14 +98,23 @@ impl ScraperEngine {
         }
 
         let elapsed = start.elapsed();
+        let is_empty = all_data.is_empty();
 
         Ok(ScrapeResult {
             job_id: job.id.clone(),
             url: job.url.clone(),
             timestamp: Utc::now().naive_utc(),
             data: all_data,
-            status: ScrapeStatus::Success,
-            error: None,
+            status: if is_empty {
+                ScrapeStatus::Failed
+            } else {
+                ScrapeStatus::Success
+            },
+            error: if is_empty {
+                Some("No data extracted from the page".into())
+            } else {
+                None
+            },
             duration_ms: elapsed.as_millis() as u64,
             bytes_fetched: 0,
         })
@@ -135,5 +146,72 @@ impl ScraperEngine {
             handles.push(engine.run_job(page_job));
         }
         futures::future::join_all(handles).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+    use std::collections::HashMap;
+
+    fn demo_job() -> ScrapeJob {
+        ScrapeJob {
+            id: "test-job-1".into(),
+            name: "Quotes demo".into(),
+            url: "https://quotes.toscrape.com".into(),
+            selectors: vec![
+                crate::types::Selector {
+                    name: "quote".into(),
+                    css_selector: ".quote".into(),
+                    attribute: None,
+                    extract: ExtractType::Text,
+                },
+                crate::types::Selector {
+                    name: "text".into(),
+                    css_selector: ".text".into(),
+                    attribute: None,
+                    extract: ExtractType::Text,
+                },
+                crate::types::Selector {
+                    name: "author".into(),
+                    css_selector: ".author".into(),
+                    attribute: None,
+                    extract: ExtractType::Text,
+                },
+            ],
+            headers: HashMap::new(),
+            method: HttpMethod::Get,
+            body: None,
+            interval_minutes: None,
+            max_pages: Some(1),
+            concurrency: 1,
+            proxy: None,
+            user_agent: None,
+            output_format: OutputFormat::Csv,
+            enabled: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn end_to_end_real_scrape() {
+        let tmp = std::env::temp_dir().join(format!("ds_test_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4);
+
+        let job = demo_job();
+        let result = engine.run_job(job).await.unwrap();
+
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert!(!result.data.is_empty(), "no records extracted");
+        assert!(result.data[0].contains_key("author"));
+
+        let saved = storage.read().await.get_results_for_job("test-job-1").await.unwrap();
+        assert_eq!(saved.len(), 1);
+        assert!(!saved[0].data.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
