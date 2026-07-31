@@ -293,19 +293,16 @@ mod tests {
                 crate::types::Selector {
                     name: "quote".into(),
                     css_selector: ".quote".into(),
-                    attribute: None,
                     extract: ExtractType::Text,
                 },
                 crate::types::Selector {
                     name: "text".into(),
                     css_selector: ".text".into(),
-                    attribute: None,
                     extract: ExtractType::Text,
                 },
                 crate::types::Selector {
                     name: "author".into(),
                     css_selector: ".author".into(),
-                    attribute: None,
                     extract: ExtractType::Text,
                 },
             ],
@@ -318,7 +315,6 @@ mod tests {
             concurrency: 1,
             proxy: None,
             user_agent: None,
-            output_format: OutputFormat::Csv,
             enabled: true,
         }
     }
@@ -360,7 +356,6 @@ mod tests {
         job.selectors = vec![crate::types::Selector {
             name: "item".into(),
             css_selector: "*".into(),
-            attribute: None,
             extract: ExtractType::Text,
         }];
 
@@ -391,7 +386,6 @@ mod tests {
         job.selectors = vec![crate::types::Selector {
             name: "echo".into(),
             css_selector: "json".into(),
-            attribute: None,
             extract: ExtractType::Text,
         }];
 
@@ -425,7 +419,6 @@ mod tests {
         job.selectors = vec![crate::types::Selector {
             name: "item".into(),
             css_selector: "*".into(),
-            attribute: None,
             extract: ExtractType::Text,
         }];
 
@@ -494,7 +487,6 @@ mod tests {
         job.selectors = vec![crate::types::Selector {
             name: "item".into(),
             css_selector: "*".into(),
-            attribute: None,
             extract: ExtractType::Text,
         }];
 
@@ -550,7 +542,6 @@ mod tests {
         let selector = crate::types::Selector {
             name: "ua".into(),
             css_selector: "ua".into(),
-            attribute: None,
             extract: ExtractType::Text,
         };
 

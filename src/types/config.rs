@@ -16,7 +16,6 @@ pub struct ScrapeJob {
     pub concurrency: u32,
     pub proxy: Option<String>,
     pub user_agent: Option<String>,
-    pub output_format: OutputFormat,
     pub enabled: bool,
 }
 
@@ -24,7 +23,6 @@ pub struct ScrapeJob {
 pub struct Selector {
     pub name: String,
     pub css_selector: String,
-    pub attribute: Option<String>,
     pub extract: ExtractType,
 }
 
@@ -49,14 +47,6 @@ pub enum HttpMethod {
     Post,
     Put,
     Delete,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum OutputFormat {
-    #[default]
-    Csv,
-    Json,
-    Sqlite,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

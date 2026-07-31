@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use parking_lot::Mutex;
 
-use crate::types::{OutputFormat, ScrapeJob, ScrapeResult, ScrapeStatus};
+use crate::types::{ScrapeJob, ScrapeResult, ScrapeStatus};
 
 pub struct Storage {
     conn: Arc<Mutex<Connection>>,
@@ -57,17 +57,8 @@ impl Storage {
                 FOREIGN KEY (job_id) REFERENCES jobs(id)
             );
 
-            CREATE TABLE IF NOT EXISTS raw_data (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id INTEGER NOT NULL,
-                field_name TEXT NOT NULL,
-                field_value TEXT,
-                FOREIGN KEY (result_id) REFERENCES results(id)
-            );
-
             CREATE INDEX IF NOT EXISTS idx_results_job_id ON results(job_id);
             CREATE INDEX IF NOT EXISTS idx_results_timestamp ON results(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_raw_data_result_id ON raw_data(result_id);
             ",
         )?;
         Ok(())
@@ -75,9 +66,7 @@ impl Storage {
 
     pub async fn save_result(&mut self, result: &ScrapeResult) -> Result<()> {
         let conn = self.conn.lock();
-        let tx = conn.unchecked_transaction()?;
-
-        tx.execute(
+        conn.execute(
             "INSERT INTO results (job_id, url, timestamp, data, status, error, duration_ms, bytes_fetched)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
@@ -92,18 +81,6 @@ impl Storage {
             ],
         )?;
 
-        let result_id = tx.last_insert_rowid();
-
-        for record in &result.data {
-            for (key, value) in record {
-                tx.execute(
-                    "INSERT INTO raw_data (result_id, field_name, field_value) VALUES (?1, ?2, ?3)",
-                    params![result_id, key, value],
-                )?;
-            }
-        }
-
-        tx.commit()?;
         Ok(())
     }
 
@@ -146,7 +123,6 @@ impl Storage {
 
     pub async fn delete_result(&self, result_id: i64) -> Result<()> {
         let conn = self.conn.lock();
-        conn.execute("DELETE FROM raw_data WHERE result_id = ?1", params![result_id])?;
         conn.execute("DELETE FROM results WHERE id = ?1", params![result_id])?;
         Ok(())
     }
@@ -172,7 +148,6 @@ impl Storage {
                         concurrency: 1,
                         proxy: None,
                         user_agent: None,
-                        output_format: OutputFormat::Csv,
                         enabled: false,
                     }
                 }))

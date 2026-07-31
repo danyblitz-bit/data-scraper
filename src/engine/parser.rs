@@ -172,7 +172,6 @@ mod tests {
             Selector {
                 name: "title".into(),
                 css_selector: "h2".into(),
-                attribute: None,
                 extract: ExtractType::Text,
             },
         ];

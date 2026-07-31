@@ -55,7 +55,6 @@ impl ScraperPanel {
                     concurrency: 1,
                     proxy: None,
                     user_agent: None,
-                    output_format: OutputFormat::Csv,
                     enabled: true,
                 };
                 self.editing_job = Some(job);
@@ -359,7 +358,6 @@ impl ScraperPanel {
                             job.selectors.push(Selector {
                                 name: self.new_selector_name.clone(),
                                 css_selector: self.new_selector_css.clone(),
-                                attribute: None,
                                 extract: self.new_selector_extract.clone(),
                             });
                             self.new_selector_name.clear();
