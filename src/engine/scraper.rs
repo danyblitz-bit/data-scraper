@@ -424,6 +424,7 @@ mod tests {
         fn new(prefix: &str) -> Self {
             Self(std::env::temp_dir().join(format!("ds_{prefix}_{}", uuid::Uuid::new_v4())))
         }
+        fn join(&self, child: &str) -> std::path::PathBuf { self.0.join(child) }
         fn str_path(&self) -> &str { self.0.to_str().unwrap() }
     }
     impl Drop for TempDir {
@@ -529,11 +530,8 @@ mod tests {
             r#"{"json":{"hello":"world"}}"#.to_string()
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_post_{}", uuid::Uuid::new_v4()));
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        let tmp = TempDir::new("post");
+        let (_storage, engine) = test_engine(&tmp);
 
         let mut job = demo_job();
         job.id = "post-job-1".into();
@@ -558,8 +556,7 @@ mod tests {
         assert_eq!(echoed, Some("world"));
         log::info!("echoed data: {:?}", result.data);
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn json_pagination() {
@@ -572,11 +569,8 @@ mod tests {
             format!("[{}]", posts.join(","))
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_pages_{}", uuid::Uuid::new_v4()));
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        let tmp = TempDir::new("pages");
+        let (_storage, engine) = test_engine(&tmp);
 
         let mut job = demo_job();
         job.id = "pages-job-1".into();
@@ -601,8 +595,7 @@ mod tests {
         assert_eq!(ids[0], "1", "first record should be from page 1");
         assert_eq!(ids[10], "11", "tenth record should be from page 2");
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn html_next_link_pagination() {
@@ -641,11 +634,8 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_next_{}", uuid::Uuid::new_v4()));
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        let tmp = TempDir::new("next");
+        let (_storage, engine) = test_engine(&tmp);
 
         let mut job = demo_job();
         job.id = "next-job-1".into();
@@ -673,8 +663,7 @@ mod tests {
             "tenth record should come from page 2"
         );
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     fn next_link_page_html(author: &str) -> String {
         let quote = format!(
@@ -754,9 +743,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_conc_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("conc");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 2, 10, "DataScraper/1.0".into(), "exports".into());
 
@@ -781,14 +770,13 @@ mod tests {
             peak.load(Ordering::SeqCst)
         );
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn stats_invariant_total_equals_success_plus_failed() {
-        let tmp = std::env::temp_dir().join(format!("ds_stats_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("stats");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 2, "DataScraper/1.0".into(), "exports".into());
 
@@ -826,8 +814,7 @@ mod tests {
         assert!(stats.failed_requests >= 1, "failures should be counted");
         assert!(stats.total_requests >= 2, "each page fetch should count as a request");
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn json_detected_via_sniffing() {
@@ -854,9 +841,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_sniff_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("sniff");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
 
@@ -877,8 +864,7 @@ mod tests {
             "JSON body with text/plain content-type should be parsed as JSON"
         );
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn duplicate_run_is_rejected() {
@@ -909,9 +895,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_dup_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("dup");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = Arc::new(ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into()));
 
@@ -938,8 +924,7 @@ mod tests {
         let first_result = first.await.unwrap().unwrap();
         assert_eq!(first_result.status, ScrapeStatus::Success);
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn request_timeout_causes_failure() {
@@ -952,9 +937,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_timeout_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("timeout");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 1, "DataScraper/1.0".into(), "exports".into());
 
@@ -975,8 +960,7 @@ mod tests {
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].status, ScrapeStatus::Failed);
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn user_agent_fallback_and_override() {
@@ -1011,9 +995,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_ua_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("ua");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 10, "TestAgent/1.0".into(), "exports".into());
 
@@ -1047,8 +1031,7 @@ mod tests {
             "per-job UA should override the global default"
         );
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn auto_export_writes_files_on_success() {
@@ -1077,7 +1060,7 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_export_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("export");
         let export_dir = tmp.join("out");
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.join("db").to_str().unwrap()).unwrap(),
@@ -1139,8 +1122,7 @@ mod tests {
         let count = std::fs::read_dir(&export_dir).unwrap().count();
         assert_eq!(count, 2, "failed runs must not write exports");
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn partial_data_kept_when_page_fails() {
@@ -1177,9 +1159,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_partial_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("partial");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
 
@@ -1212,8 +1194,7 @@ mod tests {
         assert_eq!(saved[0].status, ScrapeStatus::Failed);
         assert_eq!(saved[0].data.len(), 2, "partial data must be persisted");
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn json_next_link_pagination() {
@@ -1246,9 +1227,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_jnext_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("jnext");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
 
@@ -1269,8 +1250,7 @@ mod tests {
         assert_eq!(result.data[0].get("id").map(|s| s.as_str()), Some("1"));
         assert_eq!(result.data[1].get("id").map(|s| s.as_str()), Some("2"));
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[tokio::test]
     async fn response_body_over_limit_fails() {
@@ -1299,9 +1279,9 @@ mod tests {
             }
         });
 
-        let tmp = std::env::temp_dir().join(format!("ds_cap_{}", uuid::Uuid::new_v4()));
+        let tmp = TempDir::new("cap");
         let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.to_str().unwrap()).unwrap(),
+            Storage::new(tmp.str_path()).unwrap(),
         ));
         let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
         engine.set_max_response_bytes(100);
@@ -1318,8 +1298,7 @@ mod tests {
         let err = engine.run_job(job).await.unwrap_err();
         assert!(err.to_string().contains("limit"), "{}", err);
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+}
 
     #[test]
     fn test_resolve_next_url_empty_returns_none() {
