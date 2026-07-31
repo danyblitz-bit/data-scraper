@@ -21,7 +21,7 @@ impl ScraperPanel {
         &mut self,
         ui: &mut egui::Ui,
         jobs: &mut Vec<ScrapeJob>,
-        _stats: &EngineStats,
+        stats: &EngineStats,
         on_run_job: &mut dyn FnMut(String),
         on_run_all: &mut dyn FnMut(),
     ) {
@@ -93,6 +93,28 @@ impl ScraperPanel {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.strong(&job.name);
+                                    if stats.running_job_ids.contains(&job.id) {
+                                        ui.colored_label(Color32::from_rgb(241, 196, 15), "Running...");
+                                    } else if let Some(last) = stats.last_runs.get(&job.id) {
+                                        let (color, text) = match &last.status {
+                                            ScrapeStatus::Success => (
+                                                Color32::LIGHT_GREEN,
+                                                format!("Last run: {} records", last.data.len()),
+                                            ),
+                                            ScrapeStatus::Partial => (
+                                                Color32::LIGHT_YELLOW,
+                                                "Last run: partial".to_string(),
+                                            ),
+                                            _ => (
+                                                Color32::from_rgb(231, 76, 60),
+                                                "Last run: failed".to_string(),
+                                            ),
+                                        };
+                                        ui.colored_label(color, text);
+                                        if let Some(err) = &last.error {
+                                            ui.label(format!("({})", err));
+                                        }
+                                    }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if ui.button("Run").clicked() {
                                             job_to_run = Some(job.id.clone());
@@ -229,6 +251,11 @@ impl ScraperPanel {
                         ui.checkbox(&mut job.enabled, "");
                         ui.end_row();
                     });
+
+                ui.colored_label(
+                    Color32::GRAY,
+                    "Pagination: put {page} in the URL (e.g. ?page={page}) and set Max Pages above",
+                );
 
                 ui.add_space(16.0);
                 ui.separator();

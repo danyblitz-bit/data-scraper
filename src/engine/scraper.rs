@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Semaphore, RwLock};
 
@@ -21,6 +22,8 @@ pub struct EngineStats {
     pub failed_requests: u64,
     pub total_bytes_fetched: u64,
     pub active_jobs: u32,
+    pub running_job_ids: HashSet<String>,
+    pub last_runs: HashMap<String, ScrapeResult>,
 }
 
 impl ScraperEngine {
@@ -36,6 +39,7 @@ impl ScraperEngine {
         {
             let mut stats = self.stats.write().await;
             stats.active_jobs += 1;
+            stats.running_job_ids.insert(job.id.clone());
         }
 
         let _permit = self.semaphore.acquire().await?;
@@ -47,15 +51,33 @@ impl ScraperEngine {
         {
             let mut stats = self.stats.write().await;
             stats.active_jobs -= 1;
-            if let Ok(ref r) = result {
-                stats.total_requests += 1;
-                if r.status == ScrapeStatus::Success {
-                    stats.successful_requests += 1;
-                } else {
-                    stats.failed_requests += 1;
+            stats.running_job_ids.remove(&job.id);
+            let run = match &result {
+                Ok(r) => {
+                    stats.total_requests += 1;
+                    stats.total_bytes_fetched += r.bytes_fetched;
+                    match r.status {
+                        ScrapeStatus::Success => stats.successful_requests += 1,
+                        _ => stats.failed_requests += 1,
+                    }
+                    r.clone()
                 }
-                stats.total_bytes_fetched += r.bytes_fetched;
-            }
+                Err(e) => {
+                    stats.failed_requests += 1;
+                    ScrapeResult {
+                        id: 0,
+                        job_id: job.id.clone(),
+                        url: job.url.clone(),
+                        timestamp: Utc::now().naive_utc(),
+                        data: Vec::new(),
+                        status: ScrapeStatus::Failed,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        bytes_fetched: 0,
+                    }
+                }
+            };
+            stats.last_runs.insert(job.id.clone(), run);
         }
 
         if let Ok(ref scrape_result) = result {
@@ -69,14 +91,21 @@ impl ScraperEngine {
     async fn execute_job(&self, job: &ScrapeJob) -> Result<ScrapeResult> {
         let start = std::time::Instant::now();
         let max_pages = job.max_pages.unwrap_or(1);
+        let has_pagination = job.url.contains("{page}");
+        let total_pages = if has_pagination { max_pages } else { 1 };
 
         let mut all_data = Vec::new();
-        let current_url = job.url.clone();
-        let mut page = 0u32;
+        let mut page = 1u32;
+        let mut fetched_bytes = 0u64;
 
-        while page < max_pages {
+        while page <= total_pages {
+            let page_url = if has_pagination {
+                job.url.replace("{page}", &page.to_string())
+            } else {
+                job.url.clone()
+            };
             let resp = fetch_url_with_retry(
-                &current_url,
+                &page_url,
                 job.proxy.as_deref(),
                 job.user_agent.as_deref(),
                 job.timeout().as_secs(),
@@ -95,6 +124,7 @@ impl ScraperEngine {
                 .unwrap_or(false);
 
             let bytes = resp.bytes().await?;
+            fetched_bytes += bytes.len() as u64;
 
             if is_json {
                 let text = String::from_utf8_lossy(&bytes);
@@ -107,15 +137,11 @@ impl ScraperEngine {
                 all_data.extend(extract_json_value(&json, &path));
             } else {
                 let html = String::from_utf8_lossy(&bytes);
-                let result = parse_html(&html, &current_url, &job.id, &job.selectors);
+                let result = parse_html(&html, &page_url, &job.id, &job.selectors);
                 all_data.extend(result.data);
             }
 
             page += 1;
-
-            if page >= max_pages {
-                break;
-            }
         }
 
         let elapsed = start.elapsed();
@@ -138,7 +164,7 @@ impl ScraperEngine {
                 None
             },
             duration_ms: elapsed.as_millis() as u64,
-            bytes_fetched: 0,
+            bytes_fetched: fetched_bytes,
         })
     }
 
@@ -282,6 +308,41 @@ mod tests {
             .map(|v| v.as_str());
         assert_eq!(echoed, Some("world"));
         log::info!("echoed data: {:?}", result.data);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn json_pagination() {
+        let tmp = std::env::temp_dir().join(format!("ds_pages_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4);
+
+        let mut job = demo_job();
+        job.id = "pages-job-1".into();
+        job.name = "Paginated API".into();
+        job.url = "https://jsonplaceholder.typicode.com/posts?_page={page}".into();
+        job.max_pages = Some(2);
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            attribute: None,
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(result.data.len(), 20, "two pages of 10 posts expected");
+        let ids: Vec<String> = result
+            .data
+            .iter()
+            .map(|r| r.get("id").cloned().unwrap_or_default())
+            .collect();
+        assert_eq!(ids[0], "1", "first record should be from page 1");
+        assert_eq!(ids[10], "11", "tenth record should be from page 2");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
