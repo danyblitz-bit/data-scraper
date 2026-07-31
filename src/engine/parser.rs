@@ -19,8 +19,20 @@ pub fn parse_html(
         if let Ok(css_sel) = Selector::parse(&first.css_selector) {
             for element in document.select(&css_sel) {
                 let mut record = HashMap::new();
-                for sel in selectors {
-                    let value = extract_value(&element, sel);
+                for (i, sel) in selectors.iter().enumerate() {
+                    if i == 0 {
+                        record.insert(sel.name.clone(), extract_value(&element, sel));
+                        continue;
+                    }
+                    // ponytail: field selector matches first element inside the row
+                    let value = match Selector::parse(&sel.css_selector) {
+                        Ok(field_sel) => element
+                            .select(&field_sel)
+                            .next()
+                            .map(|f| extract_value(&f, sel))
+                            .unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
                     record.insert(sel.name.clone(), value);
                 }
                 records.push(record);
@@ -170,8 +182,18 @@ mod tests {
         let html = r#"<html><body><div class="item"><h2>Title 1</h2><p>Desc 1</p></div><div class="item"><h2>Title 2</h2><p>Desc 2</p></div></body></html>"#;
         let selectors = vec![
             Selector {
+                name: "item".into(),
+                css_selector: ".item".into(),
+                extract: ExtractType::Text,
+            },
+            Selector {
                 name: "title".into(),
                 css_selector: "h2".into(),
+                extract: ExtractType::Text,
+            },
+            Selector {
+                name: "desc".into(),
+                css_selector: "p".into(),
                 extract: ExtractType::Text,
             },
         ];
@@ -180,6 +202,12 @@ mod tests {
         assert_eq!(result.status, ScrapeStatus::Success);
         assert_eq!(result.data.len(), 2);
         assert_eq!(result.data[0].get("title").unwrap(), "Title 1");
+        assert_eq!(
+            result.data[0].get("desc").unwrap(),
+            "Desc 1",
+            "field selectors must match inside the row element"
+        );
+        assert_eq!(result.data[1].get("desc").unwrap(), "Desc 2");
     }
 
     #[test]

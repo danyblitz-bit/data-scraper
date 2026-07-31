@@ -439,6 +439,41 @@ mod tests {
 
     #[tokio::test]
     async fn html_next_link_pagination() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    let _ = reader.read_line(&mut line);
+                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let mut body = match path.as_str() {
+                        "/page/2/" => next_link_page_html("Author Two"),
+                        _ => {
+                            let mut html = next_link_page_html("Author One");
+                            html.push_str(r#"<li class="next"><a href="/page/2/">Next</a></li>"#);
+                            html
+                        }
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
         let tmp = std::env::temp_dir().join(format!("ds_next_{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
@@ -448,6 +483,7 @@ mod tests {
         let mut job = demo_job();
         job.id = "next-job-1".into();
         job.name = "Quotes with next links".into();
+        job.url = format!("http://{addr}/");
         job.next_link_selector = Some("li.next a".into());
         job.max_pages = Some(2);
 
@@ -459,8 +495,26 @@ mod tests {
             20,
             "two pages of 10 quotes expected; single page would give 10"
         );
+        assert_eq!(
+            result.data[0].get("author").map(|s| s.as_str()),
+            Some("Author One"),
+            "first record should come from page 1"
+        );
+        assert_eq!(
+            result.data[10].get("author").map(|s| s.as_str()),
+            Some("Author Two"),
+            "tenth record should come from page 2"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn next_link_page_html(author: &str) -> String {
+        let quote = format!(
+            "<div class=\"quote\"><span class=\"text\">Quote</span><small class=\"author\">{}</small></div>",
+            author
+        );
+        format!("<html><body>{}</body></html>", quote.repeat(10))
     }
 
     #[tokio::test]
