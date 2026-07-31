@@ -143,7 +143,7 @@ impl ScraperPanel {
     }
 
     fn show_job_editor(&mut self, ui: &mut egui::Ui, jobs: &mut Vec<ScrapeJob>) {
-        let mut job = match self.editing_job.clone() {
+        let mut job = match self.editing_job.take() {
             Some(j) => j,
             None => return,
         };
@@ -266,13 +266,14 @@ impl ScraperPanel {
                     *existing = job;
                 }
                 self.show_edit_dialog = false;
-                self.editing_job = None;
                 self.jobs_modified = true;
+            } else {
+                self.editing_job = Some(job);
             }
-        }
-        if cancel {
+        } else if cancel {
             self.show_edit_dialog = false;
-            self.editing_job = None;
+        } else {
+            self.editing_job = Some(job);
         }
     }
 }
