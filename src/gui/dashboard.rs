@@ -35,7 +35,9 @@ pub fn show_dashboard(
     ui.separator();
     ui.add_space(10.0);
 
-    let avg_label = if avg_duration_ms >= 1000.0 {
+    let avg_label = if avg_duration_ms <= 0.0 {
+        "—".to_owned()
+    } else if avg_duration_ms >= 1000.0 {
         format!("{:.2} s", avg_duration_ms / 1000.0)
     } else {
         format!("{:.0} ms", avg_duration_ms)

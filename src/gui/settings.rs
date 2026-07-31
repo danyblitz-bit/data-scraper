@@ -37,7 +37,7 @@ impl SettingsPanel {
         ui.heading("About");
         ui.label("Data Scraper v0.1.0");
         ui.label("High-performance Windows data scraper built with Rust + egui");
-        ui.hyperlink_to("GitHub", "https://github.com/datascraper");
+        // ponytail: no stable GitHub URL owned yet; link omitted to avoid a dead link.
     }
 
     fn settings_fields(&mut self, ui: &mut egui::Ui, config: &mut AppConfig) {
