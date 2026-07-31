@@ -70,9 +70,6 @@ impl ScraperEngine {
             stats.running_job_ids.insert(job.id.clone());
         }
 
-        let sem = self.semaphore.read().await.clone();
-        let _permit = sem.acquire().await?;
-
         self.storage.write().await.save_job(&job).await?;
 
         let result = self.execute_job(&job).await;
@@ -83,17 +80,8 @@ impl ScraperEngine {
             stats.active_jobs -= 1;
             stats.running_job_ids.remove(&job.id);
             let run = match &result {
-                Ok(r) => {
-                    stats.total_requests += 1;
-                    stats.total_bytes_fetched += r.bytes_fetched;
-                    match r.status {
-                        ScrapeStatus::Success => stats.successful_requests += 1,
-                        _ => stats.failed_requests += 1,
-                    }
-                    r.clone()
-                }
+                Ok(r) => r.clone(),
                 Err(e) => {
-                    stats.failed_requests += 1;
                     let f = ScrapeResult {
                         id: 0,
                         job_id: job.id.clone(),
@@ -252,7 +240,11 @@ impl ScraperEngine {
         timeout_secs: u64,
         effective_ua: Option<&str>,
     ) -> Result<(u64, Vec<HashMap<String, String>>, Option<String>)> {
-        let resp = fetch_url_with_retry(
+        // ponytail: one global semaphore per HTTP request; retries count as one
+        let sem = self.semaphore.read().await.clone();
+        let _permit = sem.acquire().await?;
+
+        let fetch_result = fetch_url_with_retry(
             url,
             job.proxy.as_deref(),
             effective_ua,
@@ -262,7 +254,18 @@ impl ScraperEngine {
             job.body.as_deref(),
             &job.headers,
         )
-        .await?;
+        .await;
+
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_requests += 1;
+            match &fetch_result {
+                Ok(_) => stats.successful_requests += 1,
+                Err(_) => stats.failed_requests += 1,
+            }
+        }
+
+        let resp = fetch_result?;
 
         let is_json = resp
             .headers()
@@ -273,6 +276,10 @@ impl ScraperEngine {
 
         let bytes = resp.bytes().await?;
         let fetched = bytes.len() as u64;
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_bytes_fetched += fetched;
+        }
 
         let mut records = Vec::new();
         let mut next_link = None;
@@ -321,6 +328,7 @@ mod tests {
     use crate::storage::Storage;
     use std::collections::HashMap;
     use std::io::{BufRead, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn demo_job() -> ScrapeJob {
         ScrapeJob {
@@ -614,6 +622,115 @@ mod tests {
             }
         });
         addr
+    }
+
+    #[tokio::test]
+    async fn global_concurrency_bounds_parallel_fetches() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let current = Arc::new(AtomicU64::new(0));
+        let peak = Arc::new(AtomicU64::new(0));
+        let current_srv = current.clone();
+        let peak_srv = peak.clone();
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let in_flight = current_srv.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak_srv.fetch_max(in_flight, Ordering::SeqCst);
+                    let body = r#"[{"id":1}]"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                    current_srv.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_conc_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 2, 10, "DataScraper/1.0".into(), "exports".into());
+
+        let mut job = demo_job();
+        job.id = "conc-job-1".into();
+        job.url = format!("http://{addr}/?page={{page}}");
+        job.max_pages = Some(4);
+        job.concurrency = 10;
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(result.data.len(), 4);
+
+        assert!(
+            peak.load(Ordering::SeqCst) <= 2,
+            "global concurrency cap of 2 violated: peak {}",
+            peak.load(Ordering::SeqCst)
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn stats_invariant_total_equals_success_plus_failed() {
+        let tmp = std::env::temp_dir().join(format!("ds_stats_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 2, "DataScraper/1.0".into(), "exports".into());
+
+        let mut bad = demo_job();
+        bad.id = "stats-bad".into();
+        bad.url = "http://127.0.0.1:1/".into();
+        bad.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+        assert!(engine.run_job(bad).await.is_err());
+
+        let addr = serve_responses("application/json", 1, |_| r#"[{"id":1}]"#.to_string());
+        let mut ok = demo_job();
+        ok.id = "stats-ok".into();
+        ok.url = format!("http://{addr}/");
+        ok.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+        let result = engine.run_job(ok).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+
+        let stats = engine.get_stats().await;
+        assert!(
+            stats.total_requests == stats.successful_requests + stats.failed_requests,
+            "invariant broken: total {} != success {} + failed {}",
+            stats.total_requests,
+            stats.successful_requests,
+            stats.failed_requests
+        );
+        assert!(stats.successful_requests >= 1, "successes should be counted");
+        assert!(stats.failed_requests >= 1, "failures should be counted");
+        assert!(stats.total_requests >= 2, "each page fetch should count as a request");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
