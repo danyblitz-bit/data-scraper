@@ -225,6 +225,7 @@ mod tests {
     use super::*;
     use crate::storage::Storage;
     use std::collections::HashMap;
+    use std::io::Write;
 
     fn demo_job() -> ScrapeJob {
         ScrapeJob {
@@ -381,6 +382,44 @@ mod tests {
             .collect();
         assert_eq!(ids[0], "1", "first record should be from page 1");
         assert_eq!(ids[10], "11", "tenth record should be from page 2");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn request_timeout_causes_failure() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_timeout_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 1);
+
+        let mut job = demo_job();
+        job.id = "timeout-job-1".into();
+        job.name = "Slow server".into();
+        job.url = format!("http://{addr}/");
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            attribute: None,
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await;
+        assert!(result.is_err(), "expected the request to time out");
+
+        let saved = storage.read().await.get_all_results(10).await.unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].status, ScrapeStatus::Failed);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
