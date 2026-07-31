@@ -329,4 +329,54 @@ mod tests {
         assert!(resp.status().is_success());
         assert_eq!(count.load(Ordering::SeqCst), 2, "429 must be retried");
     }
+
+    #[tokio::test]
+    async fn four_oh_eight_is_retried() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_srv = count.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    count_srv.fetch_add(1, Ordering::SeqCst);
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let (status, body) = if count_srv.load(Ordering::SeqCst) == 1 {
+                        ("408 Request Timeout", "timeout")
+                    } else {
+                        ("200 OK", "[{\"ok\":true}]")
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status,
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+        let resp = fetch_url_with_retry(
+            &format!("http://{}/", addr),
+            None,
+            None,
+            10,
+            2,
+            &HttpMethod::Get,
+            None,
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(resp.status().is_success());
+        assert_eq!(count.load(Ordering::SeqCst), 2, "408 must be retried");
+    }
 }

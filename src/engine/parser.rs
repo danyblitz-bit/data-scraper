@@ -449,4 +449,27 @@ mod tests {
         assert!(parse_json("").is_err());
         assert!(parse_json("{truncated").is_err());
     }
+
+    #[test]
+    fn test_parse_html_empty_selectors_fails() {
+        let result = parse_html("<p>hi</p>", "https://example.com", "j1", &[]);
+        assert_eq!(result.status, ScrapeStatus::Failed);
+        assert!(result.error.unwrap().contains("No elements"));
+    }
+
+    #[test]
+    fn test_parse_html_invalid_css_selector_fails() {
+        let s = vec![crate::types::Selector {
+            name: "x".into(),
+            css_selector: "!!!invalid!!!".into(),
+            extract: ExtractType::Text,
+        }];
+        let result = parse_html("<p>hi</p>", "https://example.com", "j1", &s);
+        assert_eq!(result.status, ScrapeStatus::Failed);
+    }
+
+    #[test]
+    fn test_find_next_link_invalid_css_returns_none() {
+        assert_eq!(find_next_link("<a href=\"/next\">go</a>", "https://example.com", "!!!bad!!!"), None);
+    }
 }

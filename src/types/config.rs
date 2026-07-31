@@ -82,7 +82,7 @@ pub enum ScrapeStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub max_concurrent_requests: u32,
     pub request_timeout_secs: u64,
@@ -122,5 +122,18 @@ pub enum Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self::Dark
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_serde_roundtrip() {
+        let cfg = AppConfig::default();
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg, back);
     }
 }
