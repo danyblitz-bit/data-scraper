@@ -21,7 +21,7 @@ pub fn parse_html(
                 let mut record = HashMap::new();
                 for (i, sel) in selectors.iter().enumerate() {
                     if i == 0 {
-                        record.insert(sel.name.clone(), extract_value(&element, sel));
+                        record.insert(sel.name.clone(), extract_value(&element, sel, url));
                         continue;
                     }
                     // ponytail: field selector matches first element inside the row
@@ -29,7 +29,7 @@ pub fn parse_html(
                         Ok(field_sel) => element
                             .select(&field_sel)
                             .next()
-                            .map(|f| extract_value(&f, sel))
+                            .map(|f| extract_value(&f, sel, url))
                             .unwrap_or_default(),
                         Err(_) => String::new(),
                     };
@@ -70,7 +70,7 @@ pub fn find_next_link(html: &str, base_url: &str, css_selector: &str) -> Option<
     base.join(href).ok().map(|u| u.to_string())
 }
 
-fn extract_value(element: &scraper::ElementRef, sel: &crate::types::Selector) -> String {
+fn extract_value(element: &scraper::ElementRef, sel: &crate::types::Selector, base_url: &str) -> String {
     match &sel.extract {
         ExtractType::Text => element.text().collect::<Vec<_>>().join(" ").trim().to_string(),
         ExtractType::Html => element.inner_html(),
@@ -79,21 +79,20 @@ fn extract_value(element: &scraper::ElementRef, sel: &crate::types::Selector) ->
             .attr(attr)
             .unwrap_or("")
             .to_string(),
-        ExtractType::Link => {
-            element
-                .value()
-                .attr("href")
-                .unwrap_or("")
-                .to_string()
-        }
-        ExtractType::Image => {
-            element
-                .value()
-                .attr("src")
-                .unwrap_or("")
-                .to_string()
-        }
+        ExtractType::Link => resolve_url(base_url, element.value().attr("href").unwrap_or("")),
+        ExtractType::Image => resolve_url(base_url, element.value().attr("src").unwrap_or("")),
     }
+}
+
+fn resolve_url(base: &str, value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    url::Url::parse(base)
+        .ok()
+        .and_then(|u| u.join(value).ok())
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| value.to_string())
 }
 
 pub fn parse_json(json_str: &str) -> Result<serde_json::Value> {
@@ -217,5 +216,40 @@ mod tests {
         assert_eq!(link, "https://example.com/page/2/");
 
         assert!(find_next_link(html, "https://example.com/list", "a.missing").is_none());
+    }
+
+    #[test]
+    fn test_link_and_image_urls_resolve_against_base() {
+        let html = r#"<ul>
+            <li class="item"><a href="/product/1">One</a><img src="images/pic.jpg"></li>
+            <li class="item"><a href="https://abs.example/x">Two</a><img src="//cdn.example.com/pic2.jpg"></li>
+        </ul>"#;
+        let selectors = vec![
+            Selector {
+                name: "row".into(),
+                css_selector: "li.item".into(),
+                extract: ExtractType::Text,
+            },
+            Selector {
+                name: "link".into(),
+                css_selector: "a".into(),
+                extract: ExtractType::Link,
+            },
+            Selector {
+                name: "img".into(),
+                css_selector: "img".into(),
+                extract: ExtractType::Image,
+            },
+        ];
+
+        let result = parse_html(html, "https://site.example/catalog/", "job1", &selectors);
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(result.data[0].get("link").unwrap(), "https://site.example/product/1");
+        assert_eq!(
+            result.data[0].get("img").unwrap(),
+            "https://site.example/catalog/images/pic.jpg"
+        );
+        assert_eq!(result.data[1].get("link").unwrap(), "https://abs.example/x");
+        assert_eq!(result.data[1].get("img").unwrap(), "https://cdn.example.com/pic2.jpg");
     }
 }
