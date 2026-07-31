@@ -216,7 +216,7 @@ impl ScraperPanel {
                     ui.horizontal(|ui| {
                         ui.label(format!("#{}", i + 1));
                         ui.text_edit_singleline(&mut sel.name);
-                        ui.label("CSS:");
+                        ui.label("CSS/Path:");
                         ui.text_edit_singleline(&mut sel.css_selector);
                         if ui.button("X").clicked() {
                             delete_selector = Some(i);
@@ -230,7 +230,7 @@ impl ScraperPanel {
                 ui.horizontal(|ui| {
                     ui.label("Name:");
                     ui.text_edit_singleline(&mut self.new_selector_name);
-                    ui.label("CSS:");
+                    ui.label("CSS/Path:");
                     ui.text_edit_singleline(&mut self.new_selector_css);
                     if ui.button("Add Selector").clicked() {
                         if !self.new_selector_name.is_empty() && !self.new_selector_css.is_empty() {

@@ -6,7 +6,7 @@ use tokio::sync::{Semaphore, RwLock};
 use crate::storage::Storage;
 use crate::types::*;
 use crate::engine::http_client::fetch_url_with_retry;
-use crate::engine::parser::parse_html;
+use crate::engine::parser::{extract_json_value, parse_html, parse_json};
 
 pub struct ScraperEngine {
     storage: Arc<RwLock<Storage>>,
@@ -84,11 +84,29 @@ impl ScraperEngine {
             )
             .await?;
 
-            let bytes = resp.bytes().await?;
-            let html = String::from_utf8_lossy(&bytes);
+            let is_json = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|ct| ct.to_lowercase().contains("json"))
+                .unwrap_or(false);
 
-            let result = parse_html(&html, &current_url, &job.id, &job.selectors);
-            all_data.extend(result.data);
+            let bytes = resp.bytes().await?;
+
+            if is_json {
+                let text = String::from_utf8_lossy(&bytes);
+                let json = parse_json(&text)?;
+                let path = job
+                    .selectors
+                    .first()
+                    .map(|s| s.css_selector.clone())
+                    .unwrap_or_default();
+                all_data.extend(extract_json_value(&json, &path));
+            } else {
+                let html = String::from_utf8_lossy(&bytes);
+                let result = parse_html(&html, &current_url, &job.id, &job.selectors);
+                all_data.extend(result.data);
+            }
 
             page += 1;
 
@@ -211,6 +229,35 @@ mod tests {
         let saved = storage.read().await.get_results_for_job("test-job-1").await.unwrap();
         assert_eq!(saved.len(), 1);
         assert!(!saved[0].data.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn end_to_end_json_api() {
+        let tmp = std::env::temp_dir().join(format!("ds_json_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4);
+
+        let mut job = demo_job();
+        job.id = "json-job-1".into();
+        job.name = "Posts API".into();
+        job.url = "https://jsonplaceholder.typicode.com/posts".into();
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            attribute: None,
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert!(!result.data.is_empty(), "no JSON records extracted");
+        assert!(result.data[0].contains_key("title"));
+        assert!(result.data[0].contains_key("userId"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
