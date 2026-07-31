@@ -56,6 +56,7 @@ impl DataScraperApp {
         let engine = Arc::new(ScraperEngine::new(
             storage.clone(),
             config.max_concurrent_requests,
+            config.request_timeout_secs,
         ));
         let jobs = config.jobs.clone();
 
@@ -334,6 +335,13 @@ impl eframe::App for DataScraperApp {
                             self.settings_panel.show(ui, &mut self.config);
                             if self.settings_panel.changed {
                                 crate::save_config(&self.config);
+                                let engine = self.engine.clone();
+                                let max_concurrent = self.config.max_concurrent_requests;
+                                let timeout = self.config.request_timeout_secs;
+                                self.runtime.spawn(async move {
+                                    engine.set_concurrency(max_concurrent).await;
+                                    engine.set_timeout(timeout);
+                                });
                             }
                         }
                     }

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeJob {
@@ -120,11 +119,5 @@ pub enum Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self::Dark
-    }
-}
-
-impl ScrapeJob {
-    pub fn timeout(&self) -> Duration {
-        Duration::from_secs(30)
     }
 }

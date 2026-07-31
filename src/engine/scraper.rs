@@ -2,8 +2,9 @@ use anyhow::Result;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Semaphore, RwLock};
+use tokio::sync::{RwLock, Semaphore};
 
 use crate::storage::Storage;
 use crate::types::*;
@@ -12,7 +13,8 @@ use crate::engine::parser::{extract_json_value, parse_html, parse_json};
 
 pub struct ScraperEngine {
     storage: Arc<RwLock<Storage>>,
-    semaphore: Arc<Semaphore>,
+    semaphore: Arc<RwLock<Arc<Semaphore>>>,
+    timeout_secs: Arc<AtomicU64>,
     stats: Arc<RwLock<EngineStats>>,
 }
 
@@ -28,12 +30,24 @@ pub struct EngineStats {
 }
 
 impl ScraperEngine {
-    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32) -> Self {
+    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32, timeout_secs: u64) -> Self {
         Self {
             storage,
-            semaphore: Arc::new(Semaphore::new(max_concurrent as usize)),
+            semaphore: Arc::new(RwLock::new(Arc::new(Semaphore::new(
+                max_concurrent.max(1) as usize,
+            )))),
+            timeout_secs: Arc::new(AtomicU64::new(timeout_secs.max(1))),
             stats: Arc::new(RwLock::new(EngineStats::default())),
         }
+    }
+
+    pub async fn set_concurrency(&self, max_concurrent: u32) {
+        let mut sem = self.semaphore.write().await;
+        *sem = Arc::new(Semaphore::new(max_concurrent.max(1) as usize));
+    }
+
+    pub fn set_timeout(&self, secs: u64) {
+        self.timeout_secs.store(secs.max(1), Ordering::Relaxed);
     }
 
     pub async fn run_job(&self, job: ScrapeJob) -> Result<ScrapeResult> {
@@ -43,7 +57,8 @@ impl ScraperEngine {
             stats.running_job_ids.insert(job.id.clone());
         }
 
-        let _permit = self.semaphore.acquire().await?;
+        let sem = self.semaphore.read().await.clone();
+        let _permit = sem.acquire().await?;
 
         self.storage.write().await.save_job(&job).await?;
 
@@ -114,7 +129,7 @@ impl ScraperEngine {
                     &page_url,
                     job.proxy.as_deref(),
                     job.user_agent.as_deref(),
-                    job.timeout().as_secs(),
+                    self.timeout_secs.load(Ordering::Relaxed),
                     3,
                     &job.method,
                     job.body.as_deref(),
@@ -255,7 +270,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30);
 
         let job = demo_job();
         let result = engine.run_job(job).await.unwrap();
@@ -277,7 +292,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30);
 
         let mut job = demo_job();
         job.id = "json-job-1".into();
@@ -306,7 +321,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30);
 
         let mut job = demo_job();
         job.id = "post-job-1".into();
@@ -341,7 +356,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4);
+        let engine = ScraperEngine::new(storage.clone(), 4, 30);
 
         let mut job = demo_job();
         job.id = "pages-job-1".into();
