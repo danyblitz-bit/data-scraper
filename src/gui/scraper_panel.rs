@@ -108,10 +108,10 @@ impl ScraperPanel {
                                         ui.colored_label(Color32::from_rgb(241, 196, 15), "Running...");
                                     } else if let Some(last) = stats.last_runs.get(&job.id) {
                                         let (color, text) = match &last.status {
-                                            ScrapeStatus::Success => (
-                                                Color32::LIGHT_GREEN,
-                                                format!("Last run: {} records", last.data.len()),
-                                            ),
+                        ScrapeStatus::Success => (
+                        Color32::LIGHT_GREEN,
+                        format!("Last run: {} records", last.record_count),
+                    ),
                                             ScrapeStatus::Failed => (
                                                 Color32::from_rgb(231, 76, 60),
                                                 "Last run: failed".to_string(),
