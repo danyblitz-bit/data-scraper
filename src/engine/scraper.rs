@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
+use futures::stream::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Semaphore, RwLock};
@@ -94,54 +95,68 @@ impl ScraperEngine {
         let has_pagination = job.url.contains("{page}");
         let total_pages = if has_pagination { max_pages } else { 1 };
 
-        let mut all_data = Vec::new();
-        let mut page = 1u32;
-        let mut fetched_bytes = 0u64;
+        let concurrency = job.concurrency.max(1) as usize;
+        let pages: Vec<u32> = (1..=total_pages).collect();
 
-        while page <= total_pages {
-            let page_url = if has_pagination {
-                job.url.replace("{page}", &page.to_string())
-            } else {
-                job.url.clone()
-            };
-            let resp = fetch_url_with_retry(
-                &page_url,
-                job.proxy.as_deref(),
-                job.user_agent.as_deref(),
-                job.timeout().as_secs(),
-                3,
-                &job.method,
-                job.body.as_deref(),
-                &job.headers,
-            )
-            .await?;
+        let page_results = futures::stream::iter(pages.into_iter().map(|page| {
+            let job = job.clone();
+            async move {
+                let page_url = if has_pagination {
+                    job.url.replace("{page}", &page.to_string())
+                } else {
+                    job.url.clone()
+                };
+                let resp = fetch_url_with_retry(
+                    &page_url,
+                    job.proxy.as_deref(),
+                    job.user_agent.as_deref(),
+                    job.timeout().as_secs(),
+                    3,
+                    &job.method,
+                    job.body.as_deref(),
+                    &job.headers,
+                )
+                .await?;
 
-            let is_json = resp
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(|ct| ct.to_lowercase().contains("json"))
-                .unwrap_or(false);
+                let is_json = resp
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|ct| ct.to_lowercase().contains("json"))
+                    .unwrap_or(false);
 
-            let bytes = resp.bytes().await?;
-            fetched_bytes += bytes.len() as u64;
+                let bytes = resp.bytes().await?;
+                let fetched = bytes.len() as u64;
 
-            if is_json {
-                let text = String::from_utf8_lossy(&bytes);
-                let json = parse_json(&text)?;
-                let path = job
-                    .selectors
-                    .first()
-                    .map(|s| s.css_selector.clone())
-                    .unwrap_or_default();
-                all_data.extend(extract_json_value(&json, &path));
-            } else {
-                let html = String::from_utf8_lossy(&bytes);
-                let result = parse_html(&html, &page_url, &job.id, &job.selectors);
-                all_data.extend(result.data);
+                let mut records = Vec::new();
+                if is_json {
+                    let text = String::from_utf8_lossy(&bytes);
+                    let json = parse_json(&text)?;
+                    let path = job
+                        .selectors
+                        .first()
+                        .map(|s| s.css_selector.clone())
+                        .unwrap_or_default();
+                    records.extend(extract_json_value(&json, &path));
+                } else {
+                    let html = String::from_utf8_lossy(&bytes);
+                    let result = parse_html(&html, &page_url, &job.id, &job.selectors);
+                    records.extend(result.data);
+                }
+
+                Ok::<(u64, Vec<HashMap<String, String>>), anyhow::Error>((fetched, records))
             }
+        }))
+        .buffered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
 
-            page += 1;
+        let mut all_data = Vec::new();
+        let mut fetched_bytes = 0u64;
+        for page in page_results {
+            let (fetched, records) = page?;
+            fetched_bytes += fetched;
+            all_data.extend(records);
         }
 
         let elapsed = start.elapsed();
