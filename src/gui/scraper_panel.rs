@@ -5,15 +5,13 @@ use crate::types::*;
 
 #[derive(Default)]
 pub struct ScraperPanel {
-    pub new_job_name: String,
-    pub new_job_url: String,
     pub new_selector_name: String,
     pub new_selector_css: String,
     pub new_selector_extract: ExtractType,
     pub new_selector_attr: String,
+    pub header_rows: Vec<(String, String)>,
     pub editing_job: Option<ScrapeJob>,
     pub show_edit_dialog: bool,
-    pub log_messages: Vec<String>,
     pub jobs_modified: bool,
     pub editor_just_opened: bool,
 }
@@ -153,6 +151,14 @@ impl ScraperPanel {
         let mut save = false;
         let mut cancel = false;
 
+        if self.editor_just_opened {
+            self.header_rows = job
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+        }
+
         egui::Window::new("Edit Job")
             .id(egui::Id::new("job_editor"))
             .resizable(true)
@@ -226,6 +232,39 @@ impl ScraperPanel {
 
                 ui.add_space(16.0);
                 ui.separator();
+                ui.heading("Custom Headers");
+                ui.add_space(8.0);
+
+                let mut remove_header: Option<usize> = None;
+                for (i, (key, value)) in self.header_rows.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("#{}", i + 1));
+                        ui.add(
+                            egui::TextEdit::singleline(key)
+                                .desired_width(180.0)
+                                .hint_text("Header name"),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(value)
+                                .desired_width(320.0)
+                                .hint_text("Value"),
+                        );
+                        if ui.button("X").clicked() {
+                            remove_header = Some(i);
+                        }
+                    });
+                }
+                if let Some(idx) = remove_header {
+                    self.header_rows.remove(idx);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("+ Add Header").clicked() {
+                        self.header_rows.push((String::new(), String::new()));
+                    }
+                });
+
+                ui.add_space(16.0);
+                ui.separator();
                 ui.heading("CSS Selectors");
                 ui.add_space(8.0);
 
@@ -289,6 +328,12 @@ impl ScraperPanel {
 
         if save {
             if !job.name.is_empty() && !job.url.is_empty() {
+                job.headers = self
+                    .header_rows
+                    .iter()
+                    .filter(|(k, v)| !k.trim().is_empty() && !v.trim().is_empty())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 let is_new = !jobs.iter().any(|j| j.id == job.id);
                 if is_new {
                     jobs.push(job);

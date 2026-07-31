@@ -243,12 +243,25 @@ impl eframe::App for DataScraperApp {
                             }
                         }
                         AppView::Results => {
+                            use std::cell::RefCell;
                             if entering_results {
                                 self.refresh_results();
                             }
                             let job_names: Vec<(String, String)> =
                                 self.jobs.iter().map(|j| (j.id.clone(), j.name.clone())).collect();
-                            self.results_panel.show(ui, &self.results, &job_names);
+                            let storage = self.storage.clone();
+                            let runtime = self.runtime.clone();
+                            let to_delete = RefCell::new(None);
+                            self.results_panel.show(ui, &self.results, &job_names, &mut |id| {
+                                *to_delete.borrow_mut() = Some(id);
+                            });
+                            if let Some(id) = to_delete.into_inner() {
+                                let storage = storage.clone();
+                                runtime.spawn(async move {
+                                    let _ = storage.write().await.delete_result(id).await;
+                                });
+                                self.refresh_results();
+                            }
                         }
                         AppView::Settings => {
                             self.settings_panel.show(ui, &mut self.config);

@@ -122,6 +122,7 @@ impl ScraperEngine {
         let is_empty = all_data.is_empty();
 
         Ok(ScrapeResult {
+            id: 0,
             job_id: job.id.clone(),
             url: job.url.clone(),
             timestamp: Utc::now().naive_utc(),
@@ -152,21 +153,6 @@ impl ScraperEngine {
 
     pub async fn get_stats(&self) -> EngineStats {
         self.stats.read().await.clone()
-    }
-
-    pub async fn run_job_parallel(
-        &self,
-        job: ScrapeJob,
-        urls: Vec<String>,
-    ) -> Vec<Result<ScrapeResult>> {
-        let mut handles = Vec::new();
-        for url in urls {
-            let mut page_job = job.clone();
-            page_job.url = url;
-            let engine = self; // Arc reference
-            handles.push(engine.run_job(page_job));
-        }
-        futures::future::join_all(handles).await
     }
 }
 
@@ -229,7 +215,7 @@ mod tests {
         assert!(!result.data.is_empty(), "no records extracted");
         assert!(result.data[0].contains_key("author"));
 
-        let saved = storage.read().await.get_results_for_job("test-job-1").await.unwrap();
+        let saved = storage.read().await.get_all_results(10).await.unwrap();
         assert_eq!(saved.len(), 1);
         assert!(!saved[0].data.is_empty());
 

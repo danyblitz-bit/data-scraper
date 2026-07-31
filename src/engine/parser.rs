@@ -30,6 +30,7 @@ pub fn parse_html(
 
     let is_empty = records.is_empty();
     ScrapeResult {
+        id: 0,
         job_id: job_id.to_string(),
         url: url.to_string(),
         timestamp: chrono::Utc::now().naive_utc(),

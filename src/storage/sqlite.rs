@@ -107,21 +107,6 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_results_for_job(&self, job_id: &str) -> Result<Vec<ScrapeResult>> {
-        let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, job_id, url, timestamp, data, status, error, duration_ms, bytes_fetched
-             FROM results WHERE job_id = ?1 ORDER BY timestamp DESC",
-        )?;
-
-        let results = stmt
-            .query_map(params![job_id], map_result_row)?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(results)
-    }
-
     pub async fn get_all_results(&self, limit: i64) -> Result<Vec<ScrapeResult>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
@@ -236,6 +221,7 @@ fn map_result_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
     };
 
     Ok(ScrapeResult {
+        id: row.get(0)?,
         job_id: row.get(1)?,
         url: row.get(2)?,
         timestamp: NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S")

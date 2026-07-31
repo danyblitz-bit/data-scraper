@@ -60,22 +60,3 @@ pub fn export_to_json(results: &[ScrapeResult], file_path: &str) -> Result<()> {
     std::fs::write(path, json)?;
     Ok(())
 }
-
-pub fn export_all_formats(
-    results: &[ScrapeResult],
-    base_name: &str,
-    export_dir: &str,
-) -> Result<()> {
-    let dir = Path::new(export_dir);
-    if !dir.exists() {
-        std::fs::create_dir_all(dir)?;
-    }
-
-    let csv_path = dir.join(format!("{}.csv", base_name));
-    export_to_csv(results, csv_path.to_str().unwrap())?;
-
-    let json_path = dir.join(format!("{}.json", base_name));
-    export_to_json(results, json_path.to_str().unwrap())?;
-
-    Ok(())
-}

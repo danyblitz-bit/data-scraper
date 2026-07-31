@@ -61,6 +61,7 @@ pub enum OutputFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeResult {
+    pub id: i64,
     pub job_id: String,
     pub url: String,
     pub timestamp: chrono::NaiveDateTime,

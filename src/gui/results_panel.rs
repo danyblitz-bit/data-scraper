@@ -17,6 +17,7 @@ impl ResultsPanel {
         ui: &mut egui::Ui,
         results: &[ScrapeResult],
         job_names: &[(String, String)],
+        on_delete: &mut dyn FnMut(i64),
     ) {
         ui.heading("Results");
         ui.separator();
@@ -104,6 +105,8 @@ impl ResultsPanel {
 
         ui.add_space(8.0);
 
+        let mut to_delete: Option<i64> = None;
+
         egui::ScrollArea::vertical()
             .max_height(ui.available_height())
             .show(ui, |ui| {
@@ -131,6 +134,11 @@ impl ResultsPanel {
                                 ui.label(format!("{}ms", result.duration_ms));
                                 ui.separator();
                                 ui.label(&result.timestamp.format("%Y-%m-%d %H:%M").to_string());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("Delete").clicked() {
+                                        to_delete = Some(result.id);
+                                    }
+                                });
                             });
                             if is_selected {
                                 ui.add_space(4.0);
@@ -180,6 +188,10 @@ impl ResultsPanel {
                     ui.add_space(4.0);
                 }
             });
+
+        if let Some(id) = to_delete {
+            on_delete(id);
+        }
     }
 
     fn export(&mut self, filtered: Vec<&ScrapeResult>, format: &str) {

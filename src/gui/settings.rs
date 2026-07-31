@@ -4,7 +4,6 @@ use crate::types::{AppConfig, Theme};
 
 #[derive(Default)]
 pub struct SettingsPanel {
-    pub config: AppConfig,
     pub changed: bool,
 }
 
