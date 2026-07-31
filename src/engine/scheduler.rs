@@ -54,8 +54,7 @@ impl Scheduler {
                     let should_run = {
                         let mut map = last_runs.write().await;
                         let last = map.get(&job.id).copied().unwrap_or_default();
-                        let due = last == chrono::NaiveDateTime::default()
-                            || (now - last).num_minutes() >= minutes;
+                        let due = is_due(last, now, minutes);
                         if due {
                             map.insert(job.id.clone(), now);
                         }
@@ -84,5 +83,42 @@ impl Scheduler {
                 }
             }
         });
+    }
+}
+
+fn is_due(last_run: chrono::NaiveDateTime, now: chrono::NaiveDateTime, interval_minutes: i64) -> bool {
+    last_run == chrono::NaiveDateTime::default()
+        || (now - last_run).num_minutes() >= interval_minutes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_due_never_run() {
+        let now = chrono::Utc::now().naive_utc();
+        assert!(is_due(chrono::NaiveDateTime::default(), now, 60));
+    }
+
+    #[test]
+    fn test_is_due_enough_time_passed() {
+        let now = chrono::Utc::now().naive_utc();
+        let last = now - chrono::Duration::minutes(61);
+        assert!(is_due(last, now, 60));
+    }
+
+    #[test]
+    fn test_is_due_not_enough_time() {
+        let now = chrono::Utc::now().naive_utc();
+        let last = now - chrono::Duration::minutes(30);
+        assert!(!is_due(last, now, 60));
+    }
+
+    #[test]
+    fn test_is_due_exactly_on_boundary() {
+        let now = chrono::Utc::now().naive_utc();
+        let last = now - chrono::Duration::minutes(60);
+        assert!(is_due(last, now, 60));
     }
 }

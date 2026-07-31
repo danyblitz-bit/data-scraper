@@ -115,6 +115,16 @@ mod tests {
         assert_eq!(parsed[0]["score"], "42");
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn test_sanitize_cell_empty_string() {
+        assert_eq!(sanitize_cell(String::new()), "");
+    }
+
+    #[test]
+    fn test_sanitize_cell_safe_value_unchanged() {
+        assert_eq!(sanitize_cell("hello".into()), "hello");
+    }
 }
 
 pub fn export_to_json(results: &[ScrapeResult], file_path: &str) -> Result<()> {
