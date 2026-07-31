@@ -23,6 +23,7 @@ pub enum AppView {
 
 pub struct DataScraperApp {
     pub current_view: AppView,
+    pub last_view: AppView,
     pub config: AppConfig,
     pub jobs: Vec<ScrapeJob>,
     pub results: Vec<ScrapeResult>,
@@ -54,6 +55,7 @@ impl DataScraperApp {
 
         let mut app = Self {
             current_view: AppView::Dashboard,
+            last_view: AppView::Dashboard,
             config,
             jobs,
             results: Vec::new(),
@@ -69,8 +71,40 @@ impl DataScraperApp {
             runtime: runtime_handle,
         };
 
+        app.load_jobs_from_db();
         app.refresh_stats();
         app
+    }
+
+    fn load_jobs_from_db(&mut self) {
+        let storage = self.storage.clone();
+        self.jobs = self.runtime.block_on(async {
+            storage.read().await.get_all_jobs().await.unwrap_or_default()
+        });
+    }
+
+    pub fn refresh_results(&mut self) {
+        let storage = self.storage.clone();
+        self.results = self.runtime.block_on(async {
+            storage.read().await.get_all_results(500).await.unwrap_or_default()
+        });
+    }
+
+    fn sync_jobs_to_db(&mut self) {
+        let storage = self.storage.clone();
+        let jobs = self.jobs.clone();
+        self.runtime.spawn(async move {
+            let s = storage.write().await;
+            let db_jobs = s.get_all_jobs().await.unwrap_or_default();
+            for j in &db_jobs {
+                if !jobs.iter().any(|x| x.id == j.id) {
+                    let _ = s.delete_job(&j.id).await;
+                }
+            }
+            for j in &jobs {
+                let _ = s.save_job(j).await;
+            }
+        });
     }
 
     pub fn refresh_stats(&mut self) {
@@ -133,6 +167,8 @@ impl eframe::App for DataScraperApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx();
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        let entering_results = self.current_view == AppView::Results && self.current_view != self.last_view;
+        self.last_view = self.current_view.clone();
         self.refresh_stats();
 
         match self.config.theme {
@@ -195,8 +231,15 @@ impl eframe::App for DataScraperApp {
                                     AppCommand::RunAllJobs => self.run_all_jobs(),
                                 }
                             }
+                            if self.scraper_panel.jobs_modified {
+                                self.scraper_panel.jobs_modified = false;
+                                self.sync_jobs_to_db();
+                            }
                         }
                         AppView::Results => {
+                            if entering_results {
+                                self.refresh_results();
+                            }
                             let job_names: Vec<(String, String)> =
                                 self.jobs.iter().map(|j| (j.id.clone(), j.name.clone())).collect();
                             self.results_panel.show(ui, &self.results, &job_names);

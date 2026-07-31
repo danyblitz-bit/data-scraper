@@ -12,6 +12,7 @@ pub struct ScraperPanel {
     pub editing_job: Option<ScrapeJob>,
     pub show_edit_dialog: bool,
     pub log_messages: Vec<String>,
+    pub jobs_modified: bool,
 }
 
 impl ScraperPanel {
@@ -118,6 +119,7 @@ impl ScraperPanel {
 
             if let Some(idx) = job_to_delete {
                 jobs.remove(idx);
+                self.jobs_modified = true;
             }
 
             if let Some(idx) = job_to_edit {
@@ -258,6 +260,7 @@ impl ScraperPanel {
                 }
                 self.show_edit_dialog = false;
                 self.editing_job = None;
+                self.jobs_modified = true;
             }
         }
         if cancel {
