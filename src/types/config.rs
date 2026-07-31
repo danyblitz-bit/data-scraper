@@ -70,6 +70,8 @@ pub struct ScrapeResult {
     pub status: ScrapeStatus,
     pub error: Option<String>,
     pub duration_ms: u64,
+    /// Byte decoded (after gzip/brotli content-coding) that the parser consumed
+    /// for this run — NOT the on-the-wire transfer size.
     pub bytes_fetched: u64,
     pub record_count: usize,
 }

@@ -48,7 +48,7 @@ pub fn show_dashboard(
         StatCard::new("Active Jobs", &stats.active_jobs.to_string(), Color32::from_rgb(155, 89, 182)),
         StatCard::new("Successful Requests", &stats.successful_requests.to_string(), Color32::from_rgb(39, 174, 96)),
         StatCard::new("Failed Requests", &stats.failed_requests.to_string(), Color32::from_rgb(231, 76, 60)),
-        StatCard::new("Total Fetched", &format_bytes(total_bytes), Color32::from_rgb(243, 156, 18)),
+        StatCard::new("Total Decoded Data", &format_bytes(total_bytes), Color32::from_rgb(243, 156, 18)),
         StatCard::new("Avg Run Duration", &avg_label, Color32::from_rgb(26, 188, 156)),
     ];
 

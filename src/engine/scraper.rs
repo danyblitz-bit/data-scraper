@@ -29,6 +29,7 @@ pub struct EngineStats {
     pub total_requests: u64,
     pub successful_requests: u64,
     pub failed_requests: u64,
+    /// Aggregate bytes decoded across all runs (post content-coding).
     pub total_bytes_fetched: u64,
     pub active_jobs: u32,
     pub running_job_ids: HashSet<String>,
