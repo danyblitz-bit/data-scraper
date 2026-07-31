@@ -50,6 +50,14 @@ pub fn parse_html(
     }
 }
 
+pub fn find_next_link(html: &str, base_url: &str, css_selector: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    let sel = Selector::parse(css_selector).ok()?;
+    let href = document.select(&sel).next()?.value().attr("href")?;
+    let base = url::Url::parse(base_url).ok()?;
+    base.join(href).ok().map(|u| u.to_string())
+}
+
 fn extract_value(element: &scraper::ElementRef, sel: &crate::types::Selector) -> String {
     match &sel.extract {
         ExtractType::Text => element.text().collect::<Vec<_>>().join(" ").trim().to_string(),
@@ -173,5 +181,14 @@ mod tests {
         assert_eq!(result.status, ScrapeStatus::Success);
         assert_eq!(result.data.len(), 2);
         assert_eq!(result.data[0].get("title").unwrap(), "Title 1");
+    }
+
+    #[test]
+    fn test_find_next_link() {
+        let html = r#"<html><body><a class="next" href="/page/2/">Next</a></body></html>"#;
+        let link = find_next_link(html, "https://example.com/list", "a.next").unwrap();
+        assert_eq!(link, "https://example.com/page/2/");
+
+        assert!(find_next_link(html, "https://example.com/list", "a.missing").is_none());
     }
 }

@@ -9,7 +9,7 @@ use tokio::sync::{RwLock, Semaphore};
 use crate::storage::Storage;
 use crate::types::*;
 use crate::engine::http_client::fetch_url_with_retry;
-use crate::engine::parser::{extract_json_value, parse_html, parse_json};
+use crate::engine::parser::{extract_json_value, find_next_link, parse_html, parse_json};
 
 pub struct ScraperEngine {
     storage: Arc<RwLock<Storage>>,
@@ -118,10 +118,7 @@ impl ScraperEngine {
         let start = std::time::Instant::now();
         let max_pages = job.max_pages.unwrap_or(1);
         let has_pagination = job.url.contains("{page}");
-        let total_pages = if has_pagination { max_pages } else { 1 };
 
-        let concurrency = job.concurrency.max(1) as usize;
-        let pages: Vec<u32> = (1..=total_pages).collect();
         let timeout_secs = self.timeout_secs.load(Ordering::Relaxed);
         let effective_ua = {
             let global = self.default_ua.read().unwrap().clone();
@@ -131,67 +128,59 @@ impl ScraperEngine {
             })
         };
 
-        let page_results = futures::stream::iter(pages.into_iter().map(|page| {
-            let job = job.clone();
-            let effective_ua = effective_ua.clone();
-            async move {
-                let page_url = if has_pagination {
-                    job.url.replace("{page}", &page.to_string())
-                } else {
-                    job.url.clone()
-                };
-                let resp = fetch_url_with_retry(
-                    &page_url,
-                    job.proxy.as_deref(),
-                    effective_ua.as_deref(),
-                    timeout_secs,
-                    3,
-                    &job.method,
-                    job.body.as_deref(),
-                    &job.headers,
-                )
-                .await?;
-
-                let is_json = resp
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|ct| ct.to_lowercase().contains("json"))
-                    .unwrap_or(false);
-
-                let bytes = resp.bytes().await?;
-                let fetched = bytes.len() as u64;
-
-                let mut records = Vec::new();
-                if is_json {
-                    let text = String::from_utf8_lossy(&bytes);
-                    let json = parse_json(&text)?;
-                    let path = job
-                        .selectors
-                        .first()
-                        .map(|s| s.css_selector.clone())
-                        .unwrap_or_default();
-                    records.extend(extract_json_value(&json, &path));
-                } else {
-                    let html = String::from_utf8_lossy(&bytes);
-                    let result = parse_html(&html, &page_url, &job.id, &job.selectors);
-                    records.extend(result.data);
+        let (all_data, fetched_bytes) = match &job.next_link_selector {
+            Some(next_sel) => {
+                let mut all_data = Vec::new();
+                let mut fetched_bytes = 0u64;
+                let mut url = job.url.clone();
+                let mut visited = HashSet::new();
+                for _ in 0..max_pages {
+                    if !visited.insert(url.clone()) {
+                        break;
+                    }
+                    let (fetched, records, next) = self
+                        .fetch_and_parse_page(job, &url, Some(next_sel), timeout_secs, effective_ua.as_deref())
+                        .await?;
+                    fetched_bytes += fetched;
+                    all_data.extend(records);
+                    match next {
+                        Some(n) if n != url => url = n,
+                        _ => break,
+                    }
                 }
-
-                Ok::<(u64, Vec<HashMap<String, String>>), anyhow::Error>((fetched, records))
+                (all_data, fetched_bytes)
             }
-        }))
-        .buffered(concurrency)
-        .collect::<Vec<_>>()
-        .await;
+            None => {
+                let total_pages = if has_pagination { max_pages } else { 1 };
+                let concurrency = job.concurrency.max(1) as usize;
+                let pages: Vec<u32> = (1..=total_pages).collect();
+                let page_results = futures::stream::iter(pages.into_iter().map(|page| {
+                    let job = job.clone();
+                    let effective_ua = effective_ua.clone();
+                    async move {
+                        let page_url = if has_pagination {
+                            job.url.replace("{page}", &page.to_string())
+                        } else {
+                            job.url.clone()
+                        };
+                        self.fetch_and_parse_page(&job, &page_url, None, timeout_secs, effective_ua.as_deref())
+                            .await
+                    }
+                }))
+                .buffered(concurrency)
+                .collect::<Vec<_>>()
+                .await;
 
-        let mut all_data = Vec::new();
-        let mut fetched_bytes = 0u64;
-        for page in page_results {
-            let (fetched, records) = page?;
-            fetched_bytes += fetched;
-            all_data.extend(records);
-        }
+                let mut all_data = Vec::new();
+                let mut fetched_bytes = 0u64;
+                for page in page_results {
+                    let (fetched, records, _) = page?;
+                    fetched_bytes += fetched;
+                    all_data.extend(records);
+                }
+                (all_data, fetched_bytes)
+            }
+        };
 
         let elapsed = start.elapsed();
         let is_empty = all_data.is_empty();
@@ -215,6 +204,59 @@ impl ScraperEngine {
             duration_ms: elapsed.as_millis() as u64,
             bytes_fetched: fetched_bytes,
         })
+    }
+
+    async fn fetch_and_parse_page(
+        &self,
+        job: &ScrapeJob,
+        url: &str,
+        next_sel: Option<&str>,
+        timeout_secs: u64,
+        effective_ua: Option<&str>,
+    ) -> Result<(u64, Vec<HashMap<String, String>>, Option<String>)> {
+        let resp = fetch_url_with_retry(
+            url,
+            job.proxy.as_deref(),
+            effective_ua,
+            timeout_secs,
+            3,
+            &job.method,
+            job.body.as_deref(),
+            &job.headers,
+        )
+        .await?;
+
+        let is_json = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.to_lowercase().contains("json"))
+            .unwrap_or(false);
+
+        let bytes = resp.bytes().await?;
+        let fetched = bytes.len() as u64;
+
+        let mut records = Vec::new();
+        let mut next_link = None;
+        if is_json {
+            let text = String::from_utf8_lossy(&bytes);
+            let json = parse_json(&text)?;
+            let path = job
+                .selectors
+                .first()
+                .map(|s| s.css_selector.clone())
+                .unwrap_or_default();
+            records.extend(extract_json_value(&json, &path));
+        } else {
+            let html = String::from_utf8_lossy(&bytes);
+            let result = parse_html(&html, url, &job.id, &job.selectors);
+            records.extend(result.data);
+            if let Some(sel) = next_sel {
+                next_link = find_next_link(&html, url, sel);
+            }
+        }
+
+        Ok((fetched, records, next_link))
     }
 
     pub async fn test_job(&self, job: &ScrapeJob) -> Result<ScrapeResult> {
@@ -272,6 +314,7 @@ mod tests {
             body: None,
             interval_minutes: None,
             max_pages: Some(1),
+            next_link_selector: None,
             concurrency: 1,
             proxy: None,
             user_agent: None,
@@ -397,6 +440,32 @@ mod tests {
             .collect();
         assert_eq!(ids[0], "1", "first record should be from page 1");
         assert_eq!(ids[10], "11", "tenth record should be from page 2");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn html_next_link_pagination() {
+        let tmp = std::env::temp_dir().join(format!("ds_next_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
+
+        let mut job = demo_job();
+        job.id = "next-job-1".into();
+        job.name = "Quotes with next links".into();
+        job.next_link_selector = Some("li.next a".into());
+        job.max_pages = Some(2);
+
+        let result = engine.run_job(job).await.unwrap();
+
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(
+            result.data.len(),
+            20,
+            "two pages of 10 quotes expected; single page would give 10"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

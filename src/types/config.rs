@@ -12,6 +12,7 @@ pub struct ScrapeJob {
     pub body: Option<String>,
     pub interval_minutes: Option<u64>,
     pub max_pages: Option<u32>,
+    pub next_link_selector: Option<String>,
     pub concurrency: u32,
     pub proxy: Option<String>,
     pub user_agent: Option<String>,

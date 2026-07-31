@@ -51,6 +51,7 @@ impl ScraperPanel {
                     body: None,
                     interval_minutes: None,
                     max_pages: Some(1),
+                    next_link_selector: None,
                     concurrency: 1,
                     proxy: None,
                     user_agent: None,
@@ -231,6 +232,18 @@ impl ScraperPanel {
                         ui.add(egui::Slider::new(&mut max_pages, 1..=1000).text("pages"));
                         job.max_pages = Some(max_pages as u32);
                         ui.end_row();
+                        ui.label("Next Link CSS:");
+                        let mut next_link = job.next_link_selector.clone().unwrap_or_default();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut next_link)
+                                .hint_text("e.g. li.next a"),
+                        );
+                        job.next_link_selector = if next_link.is_empty() {
+                            None
+                        } else {
+                            Some(next_link)
+                        };
+                        ui.end_row();
                         ui.label("Concurrency:");
                         let mut concurrency = job.concurrency as i32;
                         ui.add(egui::Slider::new(&mut concurrency, 1..=100).text("threads"));
@@ -269,7 +282,7 @@ impl ScraperPanel {
 
                 ui.colored_label(
                     Color32::GRAY,
-                    "Pagination: put {page} in the URL (e.g. ?page={page}) and set Max Pages above",
+                    "Pagination: put {page} in the URL (e.g. ?page={page}) or set a Next Link CSS selector (e.g. li.next a) and set Max Pages above",
                 );
 
                 ui.add_space(16.0);

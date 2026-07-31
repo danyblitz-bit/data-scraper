@@ -168,6 +168,7 @@ impl Storage {
                         body: None,
                         interval_minutes: None,
                         max_pages: None,
+                        next_link_selector: None,
                         concurrency: 1,
                         proxy: None,
                         user_agent: None,
