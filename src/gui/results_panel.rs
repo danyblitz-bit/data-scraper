@@ -41,12 +41,12 @@ impl ResultsPanel {
                 }
             }
             if self.selected_job_filter.is_some() {
-                if ui.button("Clear filter").clicked() {
+                if ui.add(egui::Button::new("Clear filter").min_size(egui::vec2(24.0, 24.0))).clicked() {
                     self.selected_job_filter = None;
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Clear Results").clicked() {
+                if ui.add(egui::Button::new("Clear Results").min_size(egui::vec2(24.0, 24.0))).clicked() {
                     on_clear();
                 }
             });
@@ -95,11 +95,11 @@ impl ResultsPanel {
                 total_records
             ));
             if !filtered.is_empty() {
-                if ui.button("Export CSV").clicked() {
+                if ui.add(egui::Button::new("Export CSV").min_size(egui::vec2(24.0, 24.0))).clicked() {
                     let ids: Vec<i64> = filtered.iter().map(|r| r.id).collect();
                     on_export(ids, "csv".to_string());
                 }
-                if ui.button("Export JSON").clicked() {
+                if ui.add(egui::Button::new("Export JSON").min_size(egui::vec2(24.0, 24.0))).clicked() {
                     let ids: Vec<i64> = filtered.iter().map(|r| r.id).collect();
                     on_export(ids, "json".to_string());
                 }
@@ -146,7 +146,7 @@ impl ResultsPanel {
                                 ui.separator();
                                 ui.label(&result.timestamp.format("%Y-%m-%d %H:%M").to_string());
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("Delete").clicked() {
+                                    if ui.add(egui::Button::new("Delete").min_size(egui::vec2(24.0, 24.0))).clicked() {
                                         to_delete = Some(result.id);
                                     }
                                 });

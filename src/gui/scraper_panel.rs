@@ -123,13 +123,13 @@ impl ScraperPanel {
                                         }
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.button("Run").clicked() {
+                                        if ui.add(egui::Button::new("Run").min_size(egui::vec2(24.0, 24.0))).clicked() {
                                             job_to_run = Some(job.id.clone());
                                         }
-                                        if ui.button("Edit").clicked() {
+                                        if ui.add(egui::Button::new("Edit").min_size(egui::vec2(24.0, 24.0))).clicked() {
                                             job_to_edit = Some(i);
                                         }
-                                        if ui.button("Delete").clicked() {
+                                        if ui.add(egui::Button::new("Delete").min_size(egui::vec2(24.0, 24.0))).clicked() {
                                             job_to_delete = Some(i);
                                         }
                                     });
@@ -320,7 +320,7 @@ impl ScraperPanel {
                                 .desired_width(320.0)
                                 .hint_text("Value"),
                         );
-                        if ui.button("X").clicked() {
+                        if ui.add(egui::Button::new("X").min_size(egui::vec2(28.0, 28.0))).clicked() {
                             remove_header = Some(i);
                         }
                     });
@@ -350,7 +350,7 @@ impl ScraperPanel {
                             ui.label("attr:");
                             ui.text_edit_singleline(attr);
                         }
-                        if ui.button("X").clicked() {
+                        if ui.add(egui::Button::new("X").min_size(egui::vec2(28.0, 28.0))).clicked() {
                             delete_selector = Some(i);
                         }
                     });
