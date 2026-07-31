@@ -61,6 +61,7 @@ impl DataScraperApp {
             config.user_agent.clone(),
             config.export_path.clone(),
         ));
+        engine.set_max_response_bytes(config.max_response_bytes);
         let scheduler = Scheduler::new(engine.clone(), storage.clone());
         let rt_handle = runtime_handle.clone();
 
@@ -156,9 +157,10 @@ impl DataScraperApp {
                 match engine.run_job(job).await {
                     Ok(result) => {
                         log::info!(
-                            "Job completed: {} records in {}ms",
+                            "Job completed: {} records in {}ms ({:?})",
                             result.data.len(),
-                            result.duration_ms
+                            result.duration_ms,
+                            result.status
                         );
                     }
                     Err(e) => {
@@ -362,11 +364,13 @@ impl eframe::App for DataScraperApp {
                                 let timeout = self.config.request_timeout_secs;
                                 let ua = self.config.user_agent.clone();
                                 let export_path = self.config.export_path.clone();
+                                let max_response_bytes = self.config.max_response_bytes;
                                 self.runtime.spawn(async move {
                                     engine.set_concurrency(max_concurrent).await;
                                     engine.set_timeout(timeout);
                                     engine.set_user_agent(ua);
                                     engine.set_export_path(export_path);
+                                    engine.set_max_response_bytes(max_response_bytes);
                                 });
                             }
                         }

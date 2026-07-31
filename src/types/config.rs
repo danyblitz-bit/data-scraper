@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn default_max_bytes() -> u64 {
+    64 * 1024 * 1024
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeJob {
     pub id: String,
@@ -85,6 +89,8 @@ pub struct AppConfig {
     pub theme: Theme,
     pub window_width: f32,
     pub window_height: f32,
+    #[serde(default = "default_max_bytes")]
+    pub max_response_bytes: u64,
 }
 
 impl Default for AppConfig {
@@ -98,6 +104,7 @@ impl Default for AppConfig {
             theme: Theme::Dark,
             window_width: 1280.0,
             window_height: 800.0,
+            max_response_bytes: default_max_bytes(),
         }
     }
 }

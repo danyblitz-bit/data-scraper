@@ -122,20 +122,211 @@ pub async fn fetch_url_with_retry(
                 if resp.status().is_success() {
                     return Ok(resp);
                 }
-                last_error = Some(anyhow::anyhow!(
-                    "HTTP {} for {}",
-                    resp.status(),
-                    url
-                ));
+                let status = resp.status();
+                let code = status.as_u16();
+                // ponytail: 4xx is a client bug, retrying wastes requests and
+                // hammers rate-limited APIs; 408/429 are transient, retried
+                if code >= 400 && code < 500 && code != 408 && code != 429 {
+                    return Err(anyhow::anyhow!(
+                        "HTTP {} for {} (client error, not retried)",
+                        status,
+                        url
+                    ));
+                }
+                let retry_after_secs = resp
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .unwrap_or(0);
+                last_error = Some(anyhow::anyhow!("HTTP {} for {}", status, url));
+                if attempt < max_retries {
+                    sleep_retry_delay(attempt, retry_after_secs).await;
+                }
             }
             Err(e) => {
                 last_error = Some(e);
+                if attempt < max_retries {
+                    sleep_retry_delay(attempt, 0).await;
+                }
             }
-        }
-        if attempt < max_retries {
-            let delay = Duration::from_millis(500 * 2u64.pow(attempt));
-            tokio::time::sleep(delay).await;
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after {} retries", max_retries)))
+}
+
+// ponytail: ±30% jitter breaks the thundering herd; Retry-After capped at 60s
+async fn sleep_retry_delay(attempt: u32, retry_after_secs: u64) {
+    let base_ms = 500u64 * 2u64.pow(attempt);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let factor = 0.7 + (nanos % 1000) as f64 / 1000.0 * 0.6;
+    let backoff_ms = (base_ms as f64 * factor) as u64;
+    let retry_ms = retry_after_secs.min(60).saturating_mul(1000);
+    tokio::time::sleep(Duration::from_millis(backoff_ms.max(retry_ms))).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn spawn_status_server(status: &'static str, headers: &'static str, count: Arc<AtomicUsize>) -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut stream = stream;
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut drain = String::new();
+                loop {
+                    drain.clear();
+                    if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                        break;
+                    }
+                }
+                let body = "nope";
+                let resp = format!(
+                    "HTTP/1.1 {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n{}\r\nConnection: close\r\n\r\n{}",
+                    status,
+                    body.len(),
+                    headers,
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn four_xx_is_not_retried() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let addr = spawn_status_server("404 Not Found", "", count.clone());
+        let err = fetch_url_with_retry(
+            &format!("http://{}/", addr),
+            None,
+            None,
+            10,
+            2,
+            &HttpMethod::Get,
+            None,
+            &HashMap::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("404"), "{}", err);
+        assert_eq!(count.load(Ordering::SeqCst), 1, "4xx must not be retried");
+    }
+
+    #[tokio::test]
+    async fn five_xx_is_retried_until_success() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_srv = count.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    count_srv.fetch_add(1, Ordering::SeqCst);
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let (status, body) = if count_srv.load(Ordering::SeqCst) == 1 {
+                        ("500 Internal Server Error", "boom")
+                    } else {
+                        ("200 OK", "[{\"id\":1}]")
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status,
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+        let resp = fetch_url_with_retry(
+            &format!("http://{}/", addr),
+            None,
+            None,
+            10,
+            2,
+            &HttpMethod::Get,
+            None,
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(resp.status().is_success());
+        assert_eq!(count.load(Ordering::SeqCst), 2, "5xx must be retried");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_is_retried() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_srv = count.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    count_srv.fetch_add(1, Ordering::SeqCst);
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let (status, body) = if count_srv.load(Ordering::SeqCst) == 1 {
+                        ("429 Too Many Requests", "slow down")
+                    } else {
+                        ("200 OK", "[{\"id\":1}]")
+                    };
+                    let headers = if status.contains("429") {
+                        "Retry-After: 0\r\n"
+                    } else {
+                        ""
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}\r\nConnection: close\r\n\r\n{}",
+                        status,
+                        body.len(),
+                        headers,
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+        let resp = fetch_url_with_retry(
+            &format!("http://{}/", addr),
+            None,
+            None,
+            10,
+            2,
+            &HttpMethod::Get,
+            None,
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(resp.status().is_success());
+        assert_eq!(count.load(Ordering::SeqCst), 2, "429 must be retried");
+    }
 }

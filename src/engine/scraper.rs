@@ -10,7 +10,9 @@ use crate::storage::Storage;
 use crate::storage::export::{export_to_csv, export_to_json};
 use crate::types::*;
 use crate::engine::http_client::fetch_url_with_retry;
-use crate::engine::parser::{extract_json_value, find_next_link, parse_html, parse_json};
+use crate::engine::parser::{
+    decode_body, extract_json_string, extract_json_value, find_next_link, parse_html, parse_json,
+};
 
 pub struct ScraperEngine {
     storage: Arc<RwLock<Storage>>,
@@ -18,6 +20,7 @@ pub struct ScraperEngine {
     timeout_secs: Arc<AtomicU64>,
     default_ua: Arc<std::sync::RwLock<String>>,
     export_path: Arc<std::sync::RwLock<String>>,
+    max_response_bytes: Arc<AtomicU64>,
     stats: Arc<RwLock<EngineStats>>,
 }
 
@@ -42,6 +45,7 @@ impl ScraperEngine {
             timeout_secs: Arc::new(AtomicU64::new(timeout_secs.max(1))),
             default_ua: Arc::new(std::sync::RwLock::new(user_agent)),
             export_path: Arc::new(std::sync::RwLock::new(export_path)),
+            max_response_bytes: Arc::new(AtomicU64::new(64 * 1024 * 1024)),
             stats: Arc::new(RwLock::new(EngineStats::default())),
         }
     }
@@ -61,6 +65,10 @@ impl ScraperEngine {
 
     pub fn set_export_path(&self, path: String) {
         *self.export_path.write().unwrap() = path;
+    }
+
+    pub fn set_max_response_bytes(&self, limit: u64) {
+        self.max_response_bytes.store(limit.max(1), Ordering::Relaxed);
     }
 
     pub async fn run_job(&self, job: ScrapeJob) -> Result<ScrapeResult> {
@@ -160,27 +168,36 @@ impl ScraperEngine {
             })
         };
 
-        let (all_data, fetched_bytes) = match &job.next_link_selector {
+        let (all_data, fetched_bytes, page_errors) = match &job.next_link_selector {
             Some(next_sel) => {
                 let mut all_data = Vec::new();
                 let mut fetched_bytes = 0u64;
+                let mut page_errors = Vec::new();
                 let mut url = job.url.clone();
                 let mut visited = HashSet::new();
                 for _ in 0..max_pages {
                     if !visited.insert(url.clone()) {
                         break;
                     }
-                    let (fetched, records, next) = self
+                    match self
                         .fetch_and_parse_page(job, &url, Some(next_sel), timeout_secs, effective_ua.as_deref())
-                        .await?;
-                    fetched_bytes += fetched;
-                    all_data.extend(records);
-                    match next {
-                        Some(n) if n != url => url = n,
-                        _ => break,
+                        .await
+                    {
+                        Ok((fetched, records, next)) => {
+                            fetched_bytes += fetched;
+                            all_data.extend(records);
+                            match next {
+                                Some(n) if n != url => url = n,
+                                _ => break,
+                            }
+                        }
+                        Err(e) => {
+                            page_errors.push(format!("{}: {}", url, e));
+                            break;
+                        }
                     }
                 }
-                (all_data, fetched_bytes)
+                (all_data, fetched_bytes, page_errors)
             }
             None => {
                 let total_pages = if has_pagination { max_pages } else { 1 };
@@ -205,17 +222,44 @@ impl ScraperEngine {
 
                 let mut all_data = Vec::new();
                 let mut fetched_bytes = 0u64;
+                let mut page_errors = Vec::new();
                 for page in page_results {
-                    let (fetched, records, _) = page?;
-                    fetched_bytes += fetched;
-                    all_data.extend(records);
+                    match page {
+                        Ok((fetched, records, _)) => {
+                            fetched_bytes += fetched;
+                            all_data.extend(records);
+                        }
+                        Err(e) => page_errors.push(e.to_string()),
+                    }
                 }
-                (all_data, fetched_bytes)
+                (all_data, fetched_bytes, page_errors)
             }
         };
 
         let elapsed = start.elapsed();
         let is_empty = all_data.is_empty();
+
+        // ponytail: partial results are kept and the run is marked Failed with a
+        // summary; only a run that produced no data at all stays a hard error
+        if is_empty && !page_errors.is_empty() {
+            return Err(anyhow::anyhow!("{}", page_errors.join("; ")));
+        }
+        let status = if is_empty || !page_errors.is_empty() {
+            ScrapeStatus::Failed
+        } else {
+            ScrapeStatus::Success
+        };
+        let error = if is_empty {
+            Some("No data extracted from the page".into())
+        } else if !page_errors.is_empty() {
+            Some(format!(
+                "{} page(s) failed: {}",
+                page_errors.len(),
+                page_errors.join("; ")
+            ))
+        } else {
+            None
+        };
 
         Ok(ScrapeResult {
             id: 0,
@@ -223,16 +267,8 @@ impl ScraperEngine {
             url: job.url.clone(),
             timestamp: Utc::now().naive_utc(),
             data: all_data,
-            status: if is_empty {
-                ScrapeStatus::Failed
-            } else {
-                ScrapeStatus::Success
-            },
-            error: if is_empty {
-                Some("No data extracted from the page".into())
-            } else {
-                None
-            },
+            status,
+            error,
             duration_ms: elapsed.as_millis() as u64,
             bytes_fetched: fetched_bytes,
         })
@@ -273,21 +309,35 @@ impl ScraperEngine {
 
         let resp = fetch_result?;
 
-        let ct_is_json = resp
+        let ct = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|ct| ct.to_lowercase().contains("json"))
-            .unwrap_or(false);
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let ct_is_json = ct.to_lowercase().contains("json");
 
-        let bytes = resp.bytes().await?;
+        // ponytail: cap on raw bytes protects against hostile/runaway responses
+        let limit = self.max_response_bytes.load(Ordering::Relaxed);
+        let mut bytes = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            bytes.extend_from_slice(&chunk);
+            if bytes.len() as u64 > limit {
+                return Err(anyhow::anyhow!(
+                    "response exceeded {} byte limit",
+                    limit
+                ));
+            }
+        }
         let fetched = bytes.len() as u64;
         {
             let mut stats = self.stats.write().await;
             stats.total_bytes_fetched += fetched;
         }
 
-        let text = String::from_utf8_lossy(&bytes);
+        let text = decode_body(&bytes, &ct);
         let path = job
             .selectors
             .first()
@@ -304,6 +354,15 @@ impl ScraperEngine {
         if is_json {
             let json = parse_json(&text)?;
             records.extend(extract_json_value(&json, &path));
+            if let Some(sel) = next_sel {
+                // ponytail: for JSON, the "next link" selector is a JSON path
+                // (e.g. "next_page" or "links/next") pointing at the next URL
+                if let Some(next_url) = extract_json_string(&json, sel)
+                    .and_then(|u| Self::resolve_next_url(&u, url))
+                {
+                    next_link = Some(next_url);
+                }
+            }
         } else {
             let result = parse_html(&text, url, &job.id, &job.selectors);
             records.extend(result.data);
@@ -313,6 +372,19 @@ impl ScraperEngine {
         }
 
         Ok((fetched, records, next_link))
+    }
+
+    fn resolve_next_url(next: &str, base: &str) -> Option<String> {
+        if next.is_empty() {
+            return None;
+        }
+        if next.starts_with("http://") || next.starts_with("https://") {
+            return Some(next.to_string());
+        }
+        url::Url::parse(base)
+            .ok()
+            .and_then(|u| u.join(next).ok())
+            .map(|u| u.to_string())
     }
 
     pub async fn test_job(&self, job: &ScrapeJob) -> Result<ScrapeResult> {
@@ -1055,6 +1127,185 @@ mod tests {
         assert!(engine.run_job(bad).await.is_err());
         let count = std::fs::read_dir(&export_dir).unwrap().count();
         assert_eq!(count, 2, "failed runs must not write exports");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn partial_data_kept_when_page_fails() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            // page 1 (i=0) and page 3 (i=5) succeed; page 2 fails all of its
+            // attempts (initial + 3 retries, i=1..=4)
+            for i in 0..6 {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let (status, body_str) = if i >= 1 && i <= 4 {
+                        ("500 Internal Server Error", "boom".to_string())
+                    } else {
+                        let id = if i == 5 { 3 } else { 1 };
+                        ("200 OK", format!(r#"[{{"id":{}}}]"#, id))
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status,
+                        body_str.len(),
+                        body_str
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_partial_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+
+        let mut job = demo_job();
+        job.id = "partial-job-1".into();
+        job.url = format!("http://{addr}/?page={{page}}");
+        job.max_pages = Some(3);
+        job.concurrency = 1;
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+        assert_eq!(
+            result.status,
+            ScrapeStatus::Failed,
+            "a failed page must mark the run as failed"
+        );
+        assert_eq!(result.data.len(), 2, "records from good pages must be kept");
+        assert!(
+            result.error.as_deref().unwrap_or("").contains("500"),
+            "error must mention the failed page: {:?}",
+            result.error
+        );
+
+        let saved = storage.read().await.get_all_results(10).await.unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].status, ScrapeStatus::Failed);
+        assert_eq!(saved[0].data.len(), 2, "partial data must be persisted");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn json_next_link_pagination() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for i in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let body = if i == 0 {
+                        r#"{"items":[{"id":1}],"next":"/items?page=2"}"#
+                    } else {
+                        r#"{"items":[{"id":2}]}"#
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_jnext_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+
+        let mut job = demo_job();
+        job.id = "jnext-job-1".into();
+        job.url = format!("http://{addr}/");
+        job.next_link_selector = Some("next".into());
+        job.max_pages = Some(5);
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "items/*".into(),
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+        assert_eq!(result.data.len(), 2, "two pages via JSON next field expected");
+        assert_eq!(result.data[0].get("id").map(|s| s.as_str()), Some("1"));
+        assert_eq!(result.data[1].get("id").map(|s| s.as_str()), Some("2"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn response_body_over_limit_fails() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = vec![b'x'; 2000];
+        let body_str = String::from_utf8(body).unwrap();
+        let len = body_str.len();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut stream = stream;
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut drain = String::new();
+                loop {
+                    drain.clear();
+                    if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                        break;
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    len,
+                    body_str
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_cap_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+        engine.set_max_response_bytes(100);
+
+        let mut job = demo_job();
+        job.id = "cap-job-1".into();
+        job.url = format!("http://{addr}/");
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+
+        let err = engine.run_job(job).await.unwrap_err();
+        assert!(err.to_string().contains("limit"), "{}", err);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
