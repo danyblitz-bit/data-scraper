@@ -2,7 +2,7 @@ use eframe::egui;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::engine::{EngineStats, ScraperEngine};
+use crate::engine::{EngineStats, ScraperEngine, Scheduler};
 use crate::gui::{ResultsPanel, ScraperPanel, SettingsPanel};
 use crate::storage::Storage;
 use crate::types::{AppConfig, ScrapeJob, ScrapeResult, Theme};
@@ -53,6 +53,9 @@ impl DataScraperApp {
         ));
         let jobs = config.jobs.clone();
 
+        let scheduler = Scheduler::new(engine.clone(), storage.clone());
+        let rt_handle = runtime_handle.clone();
+
         let mut app = Self {
             current_view: AppView::Dashboard,
             last_view: AppView::Dashboard,
@@ -73,6 +76,9 @@ impl DataScraperApp {
 
         app.load_jobs_from_db();
         app.refresh_stats();
+
+        rt_handle.block_on(scheduler.start());
+
         app
     }
 

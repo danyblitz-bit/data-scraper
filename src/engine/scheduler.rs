@@ -5,66 +5,73 @@ use tokio::sync::RwLock;
 use tokio::time::interval;
 
 use crate::engine::ScraperEngine;
+use crate::storage::Storage;
 use crate::types::ScrapeJob;
 
 pub struct Scheduler {
     engine: Arc<ScraperEngine>,
-    jobs: Arc<RwLock<Vec<ScrapeJob>>>,
-    task_map: Arc<RwLock<HashMap<String, bool>>>,
+    storage: Arc<RwLock<Storage>>,
+    last_runs: Arc<RwLock<HashMap<String, chrono::NaiveDateTime>>>,
 }
 
 impl Scheduler {
-    pub fn new(engine: Arc<ScraperEngine>, jobs: Arc<RwLock<Vec<ScrapeJob>>>) -> Self {
+    pub fn new(engine: Arc<ScraperEngine>, storage: Arc<RwLock<Storage>>) -> Self {
         Self {
             engine,
-            jobs,
-            task_map: Arc::new(RwLock::new(HashMap::new())),
+            storage,
+            last_runs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub async fn start(&self) {
         let engine = self.engine.clone();
-        let jobs = self.jobs.clone();
-        let task_map = self.task_map.clone();
+        let storage = self.storage.clone();
+        let last_runs = self.last_runs.clone();
 
         tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(60));
+            let mut ticker = interval(Duration::from_secs(30));
             loop {
                 ticker.tick().await;
-                let current_jobs = jobs.read().await;
-                for job in current_jobs.iter() {
-                    if let Some(interval_min) = job.interval_minutes {
-                        if interval_min > 0 && job.enabled {
-                            let should_run = {
-                                let mut map = task_map.write().await;
-                                let last_run = map.get(&job.id).copied().unwrap_or(false);
-                                if !last_run {
-                                    map.insert(job.id.clone(), true);
-                                    true
-                                } else {
-                                    false
-                                }
-                            };
-                            if should_run {
-                                let engine = engine.clone();
-                                let job = job.clone();
-                                tokio::spawn(async move {
-                                    log::info!("Scheduled job '{}' starting", job.name);
-                                    match engine.run_job(job).await {
-                                        Ok(result) => {
-                                            log::info!(
-                                                "Scheduled job completed: {} items in {}ms",
-                                                result.data.len(),
-                                                result.duration_ms
-                                            );
-                                        }
-                                        Err(e) => {
-                                            log::error!("Scheduled job failed: {}", e);
-                                        }
-                                    }
-                                });
-                            }
+                let jobs: Vec<ScrapeJob> = match storage.read().await.get_all_jobs().await {
+                    Ok(jobs) => jobs,
+                    Err(e) => {
+                        log::error!("Scheduler: failed to load jobs: {}", e);
+                        continue;
+                    }
+                };
+
+                let now = chrono::Utc::now().naive_utc();
+                for job in jobs.iter().filter(|j| j.enabled && j.interval_minutes.unwrap_or(0) > 0) {
+                    let minutes = job.interval_minutes.unwrap_or(0) as i64;
+                    let should_run = {
+                        let mut map = last_runs.write().await;
+                        let last = map.get(&job.id).copied().unwrap_or_default();
+                        let due = last == chrono::NaiveDateTime::default()
+                            || (now - last).num_minutes() >= minutes;
+                        if due {
+                            map.insert(job.id.clone(), now);
                         }
+                        due
+                    };
+
+                    if should_run {
+                        let engine = engine.clone();
+                        let job = job.clone();
+                        tokio::spawn(async move {
+                            log::info!("Scheduled job '{}' starting", job.name);
+                            match engine.run_job(job).await {
+                                Ok(result) => {
+                                    log::info!(
+                                        "Scheduled job completed: {} items in {}ms",
+                                        result.data.len(),
+                                        result.duration_ms
+                                    );
+                                }
+                                Err(e) => {
+                                    log::error!("Scheduled job failed: {}", e);
+                                }
+                            }
+                        });
                     }
                 }
             }
