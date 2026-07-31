@@ -58,6 +58,7 @@ impl DataScraperApp {
             config.max_concurrent_requests,
             config.request_timeout_secs,
             config.user_agent.clone(),
+            config.export_path.clone(),
         ));
         let jobs = config.jobs.clone();
 
@@ -346,10 +347,12 @@ impl eframe::App for DataScraperApp {
                                 let max_concurrent = self.config.max_concurrent_requests;
                                 let timeout = self.config.request_timeout_secs;
                                 let ua = self.config.user_agent.clone();
+                                let export_path = self.config.export_path.clone();
                                 self.runtime.spawn(async move {
                                     engine.set_concurrency(max_concurrent).await;
                                     engine.set_timeout(timeout);
                                     engine.set_user_agent(ua);
+                                    engine.set_export_path(export_path);
                                 });
                             }
                         }

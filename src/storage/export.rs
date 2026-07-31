@@ -25,6 +25,7 @@ pub fn export_to_csv(results: &[ScrapeResult], file_path: &str) -> Result<()> {
             }
         }
     }
+    all_keys.sort();
 
     if !all_keys.is_empty() {
         let header: Vec<&str> = all_keys.iter().map(|s| s.as_str()).collect();

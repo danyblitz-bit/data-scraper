@@ -148,6 +148,7 @@ impl Storage {
                         concurrency: 1,
                         proxy: None,
                         user_agent: None,
+                        auto_export: None,
                         enabled: false,
                     }
                 }))

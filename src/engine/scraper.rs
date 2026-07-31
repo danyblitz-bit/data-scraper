@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 
 use crate::storage::Storage;
+use crate::storage::export::{export_to_csv, export_to_json};
 use crate::types::*;
 use crate::engine::http_client::fetch_url_with_retry;
 use crate::engine::parser::{extract_json_value, find_next_link, parse_html, parse_json};
@@ -16,6 +17,7 @@ pub struct ScraperEngine {
     semaphore: Arc<RwLock<Arc<Semaphore>>>,
     timeout_secs: Arc<AtomicU64>,
     default_ua: Arc<std::sync::RwLock<String>>,
+    export_path: Arc<std::sync::RwLock<String>>,
     stats: Arc<RwLock<EngineStats>>,
 }
 
@@ -31,7 +33,7 @@ pub struct EngineStats {
 }
 
 impl ScraperEngine {
-    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32, timeout_secs: u64, user_agent: String) -> Self {
+    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32, timeout_secs: u64, user_agent: String, export_path: String) -> Self {
         Self {
             storage,
             semaphore: Arc::new(RwLock::new(Arc::new(Semaphore::new(
@@ -39,6 +41,7 @@ impl ScraperEngine {
             )))),
             timeout_secs: Arc::new(AtomicU64::new(timeout_secs.max(1))),
             default_ua: Arc::new(std::sync::RwLock::new(user_agent)),
+            export_path: Arc::new(std::sync::RwLock::new(export_path)),
             stats: Arc::new(RwLock::new(EngineStats::default())),
         }
     }
@@ -54,6 +57,10 @@ impl ScraperEngine {
 
     pub fn set_user_agent(&self, ua: String) {
         *self.default_ua.write().unwrap() = ua;
+    }
+
+    pub fn set_export_path(&self, path: String) {
+        *self.export_path.write().unwrap() = path;
     }
 
     pub async fn run_job(&self, job: ScrapeJob) -> Result<ScrapeResult> {
@@ -109,9 +116,40 @@ impl ScraperEngine {
             self.storage.write().await.save_result(&f).await?;
         } else if let Ok(ref scrape_result) = result {
             self.storage.write().await.save_result(scrape_result).await?;
+            self.auto_export(job, scrape_result);
         }
 
         result
+    }
+
+    fn auto_export(&self, job: ScrapeJob, result: &ScrapeResult) {
+        if result.status != ScrapeStatus::Success {
+            return;
+        }
+        let Some(format) = job.auto_export else {
+            return;
+        };
+        let path = self.export_path.read().unwrap().clone();
+        let base = path.trim_end_matches(['/', '\\']);
+        let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let safe_name: String = job
+            .name
+            .chars()
+            .map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c })
+            .collect();
+        // ponytail: per-second filename, same-second runs overwrite
+        let ext = match format {
+            crate::types::ExportFormat::Csv => "csv",
+            crate::types::ExportFormat::Json => "json",
+        };
+        let file = format!("{}/{}_{}.{}", base, safe_name, ts, ext);
+        let write = |p: &str| match format {
+            crate::types::ExportFormat::Csv => export_to_csv(&[result.clone()], p),
+            crate::types::ExportFormat::Json => export_to_json(&[result.clone()], p),
+        };
+        if let Err(e) = write(&file) {
+            log::warn!("auto-export failed for job {}: {}", job.name, e);
+        }
     }
 
     async fn execute_job(&self, job: &ScrapeJob) -> Result<ScrapeResult> {
@@ -315,6 +353,7 @@ mod tests {
             concurrency: 1,
             proxy: None,
             user_agent: None,
+            auto_export: None,
             enabled: true,
         }
     }
@@ -325,7 +364,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
 
         let job = demo_job();
         let result = engine.run_job(job).await.unwrap();
@@ -347,7 +386,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
 
         let mut job = demo_job();
         job.id = "json-job-1".into();
@@ -375,7 +414,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
 
         let mut job = demo_job();
         job.id = "post-job-1".into();
@@ -409,7 +448,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
 
         let mut job = demo_job();
         job.id = "pages-job-1".into();
@@ -478,7 +517,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
 
         let mut job = demo_job();
         job.id = "next-job-1".into();
@@ -532,7 +571,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 1, "DataScraper/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 1, "DataScraper/1.0".into(), "exports".into());
 
         let mut job = demo_job();
         job.id = "timeout-job-1".into();
@@ -591,7 +630,7 @@ mod tests {
         let storage = Arc::new(RwLock::new(
             Storage::new(tmp.to_str().unwrap()).unwrap(),
         ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 10, "TestAgent/1.0".into());
+        let engine = ScraperEngine::new(storage.clone(), 4, 10, "TestAgent/1.0".into(), "exports".into());
 
         let selector = crate::types::Selector {
             name: "ua".into(),
@@ -622,6 +661,98 @@ mod tests {
             Some("JobAgent/2.0"),
             "per-job UA should override the global default"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn auto_export_writes_files_on_success() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = r#"[{"title":"One","author":"A"},{"title":"Two","author":"B"}]"#;
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                if let Ok((stream, _)) = listener.accept() {
+                    let mut stream = stream;
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut drain = String::new();
+                    loop {
+                        drain.clear();
+                        if reader.read_line(&mut drain).unwrap() == 0 || drain == "\r\n" {
+                            break;
+                        }
+                    }
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_export_{}", uuid::Uuid::new_v4()));
+        let export_dir = tmp.join("out");
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.join("db").to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            10,
+            "DataScraper/1.0".into(),
+            export_dir.to_str().unwrap().into(),
+        );
+
+        let json_selector = crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        };
+
+        let mut job = demo_job();
+        job.id = "export-job-1".into();
+        job.name = "Exporter".into();
+        job.url = format!("http://{addr}/");
+        job.selectors = vec![json_selector.clone()];
+        job.auto_export = Some(ExportFormat::Csv);
+        let result = engine.run_job(job.clone()).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+
+        job.id = "export-job-2".into();
+        job.auto_export = Some(ExportFormat::Json);
+        let result = engine.run_job(job.clone()).await.unwrap();
+        assert_eq!(result.status, ScrapeStatus::Success);
+
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(&export_dir).unwrap() {
+            names.push(entry.unwrap().file_name().to_string_lossy().to_string());
+        }
+        assert_eq!(names.len(), 2, "one CSV and one JSON export expected");
+
+        let csv_path = export_dir.join(names.iter().find(|n| n.ends_with(".csv")).unwrap());
+        let csv_content = std::fs::read_to_string(&csv_path).unwrap();
+        assert!(
+            csv_content.starts_with("author,title"),
+            "CSV columns must be sorted for stable exports: {}",
+            csv_content
+        );
+        assert!(csv_content.contains("One"), "CSV record missing: {}", csv_content);
+
+        let json_path = export_dir.join(names.iter().find(|n| n.ends_with(".json")).unwrap());
+        let json_content = std::fs::read_to_string(&json_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_content).unwrap();
+        assert_eq!(parsed[0]["title"], "One");
+
+        let mut bad = demo_job();
+        bad.id = "export-job-3".into();
+        bad.url = "http://127.0.0.1:1/".into();
+        bad.selectors = vec![json_selector];
+        bad.auto_export = Some(ExportFormat::Csv);
+        assert!(engine.run_job(bad).await.is_err());
+        let count = std::fs::read_dir(&export_dir).unwrap().count();
+        assert_eq!(count, 2, "failed runs must not write exports");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

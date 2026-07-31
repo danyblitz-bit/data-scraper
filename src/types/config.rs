@@ -16,7 +16,14 @@ pub struct ScrapeJob {
     pub concurrency: u32,
     pub proxy: Option<String>,
     pub user_agent: Option<String>,
+    pub auto_export: Option<ExportFormat>,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ExportFormat {
+    Csv,
+    Json,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

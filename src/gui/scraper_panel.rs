@@ -55,6 +55,7 @@ impl ScraperPanel {
                     concurrency: 1,
                     proxy: None,
                     user_agent: None,
+                    auto_export: None,
                     enabled: true,
                 };
                 self.editing_job = Some(job);
@@ -276,6 +277,23 @@ impl ScraperPanel {
                         }
                         ui.label("Enabled:");
                         ui.checkbox(&mut job.enabled, "");
+                        ui.end_row();
+                        ui.label("Auto Export:");
+                        let mut auto_on = job.auto_export.is_some();
+                        ui.checkbox(&mut auto_on, "");
+                        let mut fmt = job.auto_export.unwrap_or(ExportFormat::Csv);
+                        if auto_on {
+                            egui::ComboBox::from_id_salt("auto_export_format")
+                                .selected_text(match fmt {
+                                    ExportFormat::Csv => "CSV",
+                                    ExportFormat::Json => "JSON",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut fmt, ExportFormat::Csv, "CSV");
+                                    ui.selectable_value(&mut fmt, ExportFormat::Json, "JSON");
+                                });
+                        }
+                        job.auto_export = if auto_on { Some(fmt) } else { None };
                         ui.end_row();
                     });
 
