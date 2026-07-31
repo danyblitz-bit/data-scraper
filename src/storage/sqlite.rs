@@ -8,6 +8,8 @@ use parking_lot::Mutex;
 
 use crate::types::{ScrapeJob, ScrapeResult, ScrapeStatus};
 
+const MAX_RESULTS: i64 = 2000;
+
 pub struct Storage {
     conn: Arc<Mutex<Connection>>,
 }
@@ -79,6 +81,12 @@ impl Storage {
                 result.duration_ms as i64,
                 result.bytes_fetched as i64,
             ],
+        )?;
+        // ponytail: keep the table bounded on write; fixed cap, per-job caps if needed
+        conn.execute(
+            "DELETE FROM results WHERE id NOT IN \
+             (SELECT id FROM results ORDER BY timestamp DESC LIMIT ?1)",
+            params![MAX_RESULTS],
         )?;
 
         Ok(())

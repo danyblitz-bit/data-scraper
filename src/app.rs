@@ -89,7 +89,6 @@ impl DataScraperApp {
         app.scraper_panel.test_rx = Some(test_rx);
 
         app.load_jobs_from_db();
-        app.prune_old_results();
         app.refresh_stats();
 
         rt_handle.block_on(scheduler.start());
@@ -101,14 +100,6 @@ impl DataScraperApp {
         let storage = self.storage.clone();
         self.jobs = self.runtime.block_on(async {
             storage.read().await.get_all_jobs().await.unwrap_or_default()
-        });
-    }
-
-    fn prune_old_results(&mut self) {
-        let storage = self.storage.clone();
-        self.runtime.block_on(async move {
-            // ponytail: fixed cap at startup; add a user setting if retention needs tuning
-            let _ = storage.write().await.prune_results(2000).await;
         });
     }
 

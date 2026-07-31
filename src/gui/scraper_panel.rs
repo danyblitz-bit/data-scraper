@@ -246,6 +246,7 @@ impl ScraperPanel {
                         let mut concurrency = job.concurrency as i32;
                         ui.add(egui::Slider::new(&mut concurrency, 1..=100).text("threads"));
                         job.concurrency = concurrency as u32;
+                        ui.label("(used when paginating with {page})");
                         ui.end_row();
                         ui.label("Interval (min):");
                         let mut interval = job.interval_minutes.unwrap_or(0) as i32;

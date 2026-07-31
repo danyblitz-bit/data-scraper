@@ -66,6 +66,12 @@ impl ScraperEngine {
     pub async fn run_job(&self, job: ScrapeJob) -> Result<ScrapeResult> {
         {
             let mut stats = self.stats.write().await;
+            if stats.running_job_ids.contains(&job.id) {
+                return Err(anyhow::anyhow!(
+                    "job '{}' is already running",
+                    job.name
+                ));
+            }
             stats.active_jobs += 1;
             stats.running_job_ids.insert(job.id.clone());
         }
@@ -333,7 +339,7 @@ mod tests {
     use crate::storage::Storage;
     use std::collections::HashMap;
     use std::io::{BufRead, Write};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     fn demo_job() -> ScrapeJob {
         ScrapeJob {
@@ -532,7 +538,7 @@ mod tests {
                             break;
                         }
                     }
-                    let mut body = match path.as_str() {
+                    let body = match path.as_str() {
                         "/page/2/" => next_link_page_html("Author Two"),
                         _ => {
                             let mut html = next_link_page_html("Author One");
@@ -785,6 +791,61 @@ mod tests {
             Some("Sniffed"),
             "JSON body with text/plain content-type should be parsed as JSON"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn duplicate_run_is_rejected() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicBool::new(false));
+        let accepted_srv = accepted.clone();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                accepted_srv.store(true, Ordering::SeqCst);
+                let mut stream = stream;
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let body = r#"[{"id":1}]"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+
+        let tmp = std::env::temp_dir().join(format!("ds_dup_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = Arc::new(ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into()));
+
+        let mut job = demo_job();
+        job.id = "dup-job-1".into();
+        job.url = format!("http://{addr}/");
+        job.selectors = vec![crate::types::Selector {
+            name: "item".into(),
+            css_selector: "*".into(),
+            extract: ExtractType::Text,
+        }];
+
+        let job_first = job.clone();
+        let spawn_engine = engine.clone();
+        let first = tokio::spawn(async move { spawn_engine.run_job(job_first).await });
+        while !accepted.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let second = engine.run_job(job.clone()).await;
+        assert!(
+            second.is_err(),
+            "a concurrent run of the same job must be rejected"
+        );
+
+        let first_result = first.await.unwrap().unwrap();
+        assert_eq!(first_result.status, ScrapeStatus::Success);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
