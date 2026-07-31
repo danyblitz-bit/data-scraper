@@ -13,6 +13,7 @@ enum AppCommand {
     RunJob(String),
     RunAllJobs,
     TestJob(ScrapeJob),
+    NavigateTo(AppView),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -203,6 +204,8 @@ impl eframe::App for DataScraperApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx();
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        let entering_dashboard =
+            self.current_view == AppView::Dashboard && self.current_view != self.last_view;
         let entering_results = self.current_view == AppView::Results && self.current_view != self.last_view;
         self.last_view = self.current_view.clone();
         self.refresh_stats();
@@ -243,13 +246,34 @@ impl eframe::App for DataScraperApp {
                 .show(ui, |ui| {
                     match self.current_view {
                         AppView::Dashboard => {
+                            use std::cell::RefCell;
+                            if entering_dashboard
+                                || self.last_results_refresh.elapsed() >= std::time::Duration::from_secs(2)
+                            {
+                                self.last_results_refresh = std::time::Instant::now();
+                                self.refresh_results();
+                            }
+                            let job_names: Vec<(String, String)> =
+                                self.jobs.iter().map(|j| (j.id.clone(), j.name.clone())).collect();
+                            let commands = RefCell::new(Vec::new());
                             crate::gui::show_dashboard(
                                 ui,
                                 &self.stats,
                                 self.total_jobs,
                                 self.total_results,
                                 self.total_bytes,
+                                &job_names,
+                                &self.results,
+                                &mut || commands.borrow_mut().push(AppCommand::RunAllJobs),
+                                &mut |view| commands.borrow_mut().push(AppCommand::NavigateTo(view)),
                             );
+                            for cmd in commands.into_inner() {
+                                match cmd {
+                                    AppCommand::RunAllJobs => self.run_all_jobs(),
+                                    AppCommand::NavigateTo(view) => self.current_view = view,
+                                    _ => {}
+                                }
+                            }
                         }
                         AppView::Scraper => {
                             use std::cell::RefCell;
@@ -274,6 +298,7 @@ impl eframe::App for DataScraperApp {
                                     AppCommand::RunJob(job_id) => self.run_job(job_id),
                                     AppCommand::RunAllJobs => self.run_all_jobs(),
                                     AppCommand::TestJob(job) => self.test_job(job),
+                                    AppCommand::NavigateTo(_) => {}
                                 }
                             }
                             if self.scraper_panel.jobs_modified {

@@ -1,5 +1,6 @@
 use eframe::egui::{self, Color32, Frame, Margin, Stroke, Vec2};
 use crate::engine::EngineStats;
+use crate::types::ScrapeResult;
 
 #[derive(Clone)]
 pub struct StatCard {
@@ -18,7 +19,17 @@ impl StatCard {
     }
 }
 
-pub fn show_dashboard(ui: &mut egui::Ui, stats: &EngineStats, total_jobs: u64, total_results: u64, total_bytes: u64) {
+pub fn show_dashboard(
+    ui: &mut egui::Ui,
+    stats: &EngineStats,
+    total_jobs: u64,
+    total_results: u64,
+    total_bytes: u64,
+    job_names: &[(String, String)],
+    recent: &[ScrapeResult],
+    on_run_all: &mut dyn FnMut(),
+    on_navigate: &mut dyn FnMut(crate::app::AppView),
+) {
     ui.heading("Dashboard");
     ui.separator();
     ui.add_space(10.0);
@@ -49,7 +60,46 @@ pub fn show_dashboard(ui: &mut egui::Ui, stats: &EngineStats, total_jobs: u64, t
     ui.separator();
     ui.add_space(10.0);
     ui.heading("Quick Actions");
-    ui.label("Use the top bar to navigate between sections.");
+    ui.horizontal(|ui| {
+        if ui.button("Run All Jobs").clicked() {
+            on_run_all();
+        }
+        if ui.button("Scraper Jobs").clicked() {
+            on_navigate(crate::app::AppView::Scraper);
+        }
+        if ui.button("Results").clicked() {
+            on_navigate(crate::app::AppView::Results);
+        }
+        if ui.button("Settings").clicked() {
+            on_navigate(crate::app::AppView::Settings);
+        }
+    });
+
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(10.0);
+    ui.heading("Recent Results");
+    if recent.is_empty() {
+        ui.colored_label(
+            Color32::GRAY,
+            "No results yet - run a job to get started",
+        );
+    } else {
+        for r in recent.iter().take(5) {
+            let job_name = job_names
+                .iter()
+                .find(|(id, _)| id == &r.job_id)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_else(|| r.job_id.clone());
+            ui.horizontal(|ui| {
+                ui.colored_label(Color32::LIGHT_BLUE, &job_name);
+                ui.separator();
+                ui.label(format!("{} records", r.data.len()));
+                ui.separator();
+                ui.label(&r.timestamp.format("%Y-%m-%d %H:%M").to_string());
+            });
+        }
+    }
 }
 
 fn show_stat_card(ui: &mut egui::Ui, card: &StatCard) {
