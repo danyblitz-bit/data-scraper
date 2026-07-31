@@ -2,10 +2,13 @@ use anyhow::Result;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use reqwest::{
-    header::{HeaderMap, HeaderValue, USER_AGENT},
+    header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT},
     Client, ClientBuilder, Proxy, Response,
 };
+use std::collections::HashMap;
 use std::time::Duration;
+
+use crate::types::HttpMethod;
 
 /// Extrahiert den Wert eines Attributs aus einem Element basierend auf dem Selektortyp
 
@@ -74,10 +77,37 @@ pub async fn fetch_url(
     proxy: Option<&str>,
     user_agent: Option<&str>,
     timeout_secs: u64,
+    method: &HttpMethod,
+    body: Option<&str>,
+    headers: &HashMap<String, String>,
 ) -> Result<Response> {
     let client = get_client(proxy, user_agent, timeout_secs);
-    let response = client.get(url).send().await?;
-    Ok(response)
+
+    let mut request = match method {
+        HttpMethod::Get => client.get(url),
+        HttpMethod::Post => client.post(url),
+        HttpMethod::Put => client.put(url),
+        HttpMethod::Delete => client.delete(url),
+    };
+
+    if let Some(body) = body {
+        let trimmed = body.trim_start();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            request = request.header(reqwest::header::CONTENT_TYPE, "application/json");
+        }
+        request = request.body(body.to_string());
+    }
+
+    for (key, value) in headers {
+        if let (Ok(name), Ok(val)) = (
+            HeaderName::try_from(key.as_str()),
+            HeaderValue::from_str(value),
+        ) {
+            request = request.header(name, val);
+        }
+    }
+
+    Ok(request.send().await?)
 }
 
 pub async fn fetch_url_with_retry(
@@ -86,10 +116,13 @@ pub async fn fetch_url_with_retry(
     user_agent: Option<&str>,
     timeout_secs: u64,
     max_retries: u32,
+    method: &HttpMethod,
+    body: Option<&str>,
+    headers: &HashMap<String, String>,
 ) -> Result<Response> {
     let mut last_error = None;
     for attempt in 0..=max_retries {
-        match fetch_url(url, proxy, user_agent, timeout_secs).await {
+        match fetch_url(url, proxy, user_agent, timeout_secs, method, body, headers).await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     return Ok(resp);

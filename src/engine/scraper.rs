@@ -81,6 +81,9 @@ impl ScraperEngine {
                 job.user_agent.as_deref(),
                 job.timeout().as_secs(),
                 3,
+                &job.method,
+                job.body.as_deref(),
+                &job.headers,
             )
             .await?;
 
@@ -258,6 +261,41 @@ mod tests {
         assert!(!result.data.is_empty(), "no JSON records extracted");
         assert!(result.data[0].contains_key("title"));
         assert!(result.data[0].contains_key("userId"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn post_with_json_body() {
+        let tmp = std::env::temp_dir().join(format!("ds_post_{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(RwLock::new(
+            Storage::new(tmp.to_str().unwrap()).unwrap(),
+        ));
+        let engine = ScraperEngine::new(storage.clone(), 4);
+
+        let mut job = demo_job();
+        job.id = "post-job-1".into();
+        job.name = "Echo POST".into();
+        job.url = "https://postman-echo.com/post".into();
+        job.method = HttpMethod::Post;
+        job.body = Some("{\"hello\":\"world\"}".into());
+        job.selectors = vec![crate::types::Selector {
+            name: "echo".into(),
+            css_selector: "json".into(),
+            attribute: None,
+            extract: ExtractType::Text,
+        }];
+
+        let result = engine.run_job(job).await.unwrap();
+
+        assert_eq!(result.status, ScrapeStatus::Success);
+        let echoed = result
+            .data
+            .first()
+            .and_then(|r| r.get("hello"))
+            .map(|v| v.as_str());
+        assert_eq!(echoed, Some("world"));
+        log::info!("echoed data: {:?}", result.data);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

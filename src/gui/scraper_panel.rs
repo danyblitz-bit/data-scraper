@@ -203,6 +203,22 @@ impl ScraperPanel {
                         ui.text_edit_singleline(&mut proxy);
                         job.proxy = if proxy.is_empty() { None } else { Some(proxy) };
                         ui.end_row();
+                        ui.label("User Agent:");
+                        let mut ua = job.user_agent.clone().unwrap_or_default();
+                        ui.text_edit_singleline(&mut ua);
+                        job.user_agent = if ua.is_empty() { None } else { Some(ua) };
+                        ui.end_row();
+                        if job.method != HttpMethod::Get {
+                            ui.label("Body:");
+                            let mut body = job.body.clone().unwrap_or_default();
+                            ui.add(
+                                egui::TextEdit::multiline(&mut body)
+                                    .desired_rows(4)
+                                    .hint_text("JSON body (Content-Type: application/json if it starts with { or [)"),
+                            );
+                            job.body = if body.is_empty() { None } else { Some(body) };
+                            ui.end_row();
+                        }
                         ui.label("Enabled:");
                         ui.checkbox(&mut job.enabled, "");
                         ui.end_row();
