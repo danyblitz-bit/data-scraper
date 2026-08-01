@@ -82,7 +82,7 @@ impl ResultsPanel {
                 let q = self.search_query.to_lowercase();
                 r.url.to_lowercase().contains(&q)
                     || r.job_id.to_lowercase().contains(&q)
-                    || r.timestamp.format("%Y-%m-%d %H:%M").to_string().to_lowercase().contains(&q)
+                    || crate::gui::fmt_local(&r.timestamp).to_lowercase().contains(&q)
             })
             .collect();
 
@@ -144,7 +144,7 @@ impl ResultsPanel {
                                     ui.colored_label(Color32::from_rgb(231, 76, 60), "failed");
                                 }
                                 ui.separator();
-                                ui.label(&result.timestamp.format("%Y-%m-%d %H:%M").to_string());
+                                ui.label(crate::gui::fmt_local(&result.timestamp));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if ui.add(egui::Button::new("Delete").min_size(egui::vec2(24.0, 24.0))).clicked() {
                                         to_delete = Some(result.id);

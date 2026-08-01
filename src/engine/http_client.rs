@@ -383,10 +383,12 @@ mod tests {
     #[test]
     fn test_get_client_caches_same_params() {
         let ua = format!("TestClient/{}", uuid::Uuid::new_v4());
-        let before = CLIENT_POOL.len();
         let _c1 = get_client(None, Some(&ua), 10);
         let _c2 = get_client(None, Some(&ua), 10);
-        let after = CLIENT_POOL.len();
-        assert_eq!(before + 1, after, "same params should reuse one pool entry");
+        let ours = CLIENT_POOL
+            .iter()
+            .filter(|e| e.key().contains(&ua))
+            .count();
+        assert_eq!(ours, 1, "same params should reuse one pool entry");
     }
 }

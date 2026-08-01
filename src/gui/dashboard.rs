@@ -136,7 +136,7 @@ pub fn show_dashboard(
                 ui.separator();
                 ui.label(format!("{} records", r.record_count));
                 ui.separator();
-                ui.label(&r.timestamp.format("%Y-%m-%d %H:%M").to_string());
+                ui.label(crate::gui::fmt_local(&r.timestamp));
             });
         }
     }
