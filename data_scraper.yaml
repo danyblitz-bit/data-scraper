@@ -1,0 +1,9 @@
+max_concurrent_requests: 10
+request_timeout_secs: 30
+user_agent: DataScraper/1.0 (+https://github.com/datascraper)
+database_path: data_scraper.db
+export_path: exports
+theme: Dark
+window_width: 1280.0
+window_height: 800.0
+max_response_bytes: 1048576

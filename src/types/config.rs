@@ -101,7 +101,7 @@ impl Default for AppConfig {
         Self {
             max_concurrent_requests: 10,
             request_timeout_secs: 30,
-            user_agent: "DataScraper/1.0 (+https://github.com/datascraper)".into(),
+            user_agent: "DataScraper/1.0".into(),
             database_path: "data_scraper.db".into(),
             export_path: "exports".into(),
             theme: Theme::Dark,
