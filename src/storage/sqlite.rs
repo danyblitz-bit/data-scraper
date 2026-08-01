@@ -297,7 +297,7 @@ fn map_result_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
         id: row.get(0)?,
         job_id: row.get(1)?,
         url: row.get(2)?,
-        timestamp: NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S")
+        timestamp: NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S%.f")
             .unwrap_or_default(),
         data,
         status,
@@ -318,7 +318,7 @@ fn map_meta_row(row: &rusqlite::Row) -> rusqlite::Result<ScrapeResult> {
         id: row.get(0)?,
         job_id: row.get(1)?,
         url: row.get(2)?,
-        timestamp: NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S")
+        timestamp: NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S%.f")
             .unwrap_or_default(),
         data: Vec::new(),
         status,
@@ -562,6 +562,23 @@ mod tests {
             s.get_result_by_id(9999).await.unwrap().is_none(),
             "missing id returns None"
         );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_timestamp_with_nanoseconds_roundtrips() {
+        let tmp = std::env::temp_dir().join(format!("ds_ts_{}", uuid::Uuid::new_v4()));
+        let mut s = Storage::new(tmp.to_str().unwrap()).unwrap();
+        save_job_row(&s, "j7").await;
+        let mut r = make_result("j7", vec![record(&[("a", "1")])]);
+        let ts = chrono::Utc::now().naive_utc();
+        r.timestamp = ts;
+        s.save_result(&r).await.unwrap();
+
+        let meta = s.get_results_meta(10).await.unwrap();
+        assert_eq!(meta[0].timestamp, ts, "nanosecond timestamp must not degrade to 1970");
+        let full = s.get_result_by_id(meta[0].id).await.unwrap().unwrap();
+        assert_eq!(full.timestamp, ts);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
