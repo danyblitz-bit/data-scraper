@@ -1,6 +1,6 @@
 max_concurrent_requests: 10
 request_timeout_secs: 30
-user_agent: DataScraper/1.0 (+https://github.com/datascraper)
+user_agent: DataScraper/1.0
 database_path: data_scraper.db
 export_path: exports
 theme: Dark
