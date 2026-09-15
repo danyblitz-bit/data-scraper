@@ -82,7 +82,11 @@ Settings are stored in `data_scraper.yaml` next to the executable. You can adjus
 
 ## Support the Project
 
-DataScraper is free and open source. If it saves you time, consider a [pay-what-you-want contribution](https://danyblitz.gumroad.com) to support development.
+DataScraper is free and open source. If it saves you time:
+
+- [Buy the DevTools Bundle](https://danyblitz.gumroad.com/l/zjkam) — 3 tools + a guide, pay what you want
+- [Get Pro Support](https://danyblitz.gumroad.com/l/tmdwqj) — 30-min dedicated help with setup
+- [Buy me a coffee](https://danyblitz.gumroad.com/l/hrvpiu) — one-time support
 
 ## License
 
