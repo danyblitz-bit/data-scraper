@@ -2,17 +2,17 @@ use anyhow::Result;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{RwLock, Semaphore};
 
-use crate::storage::Storage;
-use crate::storage::export::{export_to_csv, export_to_json};
-use crate::types::*;
 use crate::engine::http_client::fetch_url_with_retry;
 use crate::engine::parser::{
     decode_body, extract_json_string, extract_json_value, find_next_link, parse_html, parse_json,
 };
+use crate::storage::Storage;
+use crate::storage::export::{export_to_csv, export_to_json};
+use crate::types::*;
 
 pub struct ScraperEngine {
     storage: Arc<RwLock<Storage>>,
@@ -37,11 +37,17 @@ pub struct EngineStats {
 }
 
 impl ScraperEngine {
-    pub fn new(storage: Arc<RwLock<Storage>>, max_concurrent: u32, timeout_secs: u64, user_agent: String, export_path: String) -> Self {
+    pub fn new(
+        storage: Arc<RwLock<Storage>>,
+        max_concurrent: u32,
+        timeout_secs: u64,
+        user_agent: String,
+        export_path: String,
+    ) -> Self {
         Self {
             storage,
             semaphore: Arc::new(RwLock::new(Arc::new(Semaphore::new(
-                max_concurrent.max(1) as usize,
+                max_concurrent.max(1) as usize
             )))),
             timeout_secs: Arc::new(AtomicU64::new(timeout_secs.max(1))),
             default_ua: Arc::new(std::sync::RwLock::new(user_agent)),
@@ -69,23 +75,26 @@ impl ScraperEngine {
     }
 
     pub fn set_max_response_bytes(&self, limit: u64) {
-        self.max_response_bytes.store(limit.max(1), Ordering::Relaxed);
+        self.max_response_bytes
+            .store(limit.max(1), Ordering::Relaxed);
     }
 
     pub async fn run_job(&self, job: ScrapeJob) -> Result<ScrapeResult> {
         {
             let mut stats = self.stats.write().await;
             if stats.running_job_ids.contains(&job.id) {
-                return Err(anyhow::anyhow!(
-                    "job '{}' is already running",
-                    job.name
-                ));
+                return Err(anyhow::anyhow!("job '{}' is already running", job.name));
             }
             stats.active_jobs += 1;
             stats.running_job_ids.insert(job.id.clone());
         }
 
-        self.storage.write().await.save_job(&job).await?;
+        if let Err(error) = self.storage.write().await.save_job(&job).await {
+            let mut stats = self.stats.write().await;
+            stats.active_jobs = stats.active_jobs.saturating_sub(1);
+            stats.running_job_ids.remove(&job.id);
+            return Err(error);
+        }
 
         let result = self.execute_job(&job).await;
 
@@ -119,7 +128,11 @@ impl ScraperEngine {
         if let Some(f) = failed {
             self.storage.write().await.save_result(&f).await?;
         } else if let Ok(ref scrape_result) = result {
-            self.storage.write().await.save_result(scrape_result).await?;
+            self.storage
+                .write()
+                .await
+                .save_result(scrape_result)
+                .await?;
             self.auto_export(job, scrape_result);
         }
 
@@ -136,17 +149,23 @@ impl ScraperEngine {
         let path = self.export_path.read().unwrap().clone();
         let base = path.trim_end_matches(['/', '\\']);
         let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let run_id = uuid::Uuid::new_v4();
         let safe_name: String = job
             .name
             .chars()
-            .map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c })
+            .map(|c| {
+                if "\\/:*?\"<>|".contains(c) || c.is_control() {
+                    '_'
+                } else {
+                    c
+                }
+            })
             .collect();
-        // ponytail: per-second filename, same-second runs overwrite
         let ext = match format {
             crate::types::ExportFormat::Csv => "csv",
             crate::types::ExportFormat::Json => "json",
         };
-        let file = format!("{}/{}_{}.{}", base, safe_name, ts, ext);
+        let file = format!("{}/{}_{}_{}.{}", base, safe_name, ts, run_id, ext);
         let write = |p: &str| match format {
             crate::types::ExportFormat::Csv => export_to_csv(&[result.clone()], p),
             crate::types::ExportFormat::Json => export_to_json(&[result.clone()], p),
@@ -182,7 +201,13 @@ impl ScraperEngine {
                         break;
                     }
                     match self
-                        .fetch_and_parse_page(job, &url, Some(next_sel), timeout_secs, effective_ua.as_deref())
+                        .fetch_and_parse_page(
+                            job,
+                            &url,
+                            Some(next_sel),
+                            timeout_secs,
+                            effective_ua.as_deref(),
+                        )
                         .await
                     {
                         Ok((fetched, records, next)) => {
@@ -214,8 +239,14 @@ impl ScraperEngine {
                         } else {
                             job.url.clone()
                         };
-                        self.fetch_and_parse_page(&job, &page_url, None, timeout_secs, effective_ua.as_deref())
-                            .await
+                        self.fetch_and_parse_page(
+                            &job,
+                            &page_url,
+                            None,
+                            timeout_secs,
+                            effective_ua.as_deref(),
+                        )
+                        .await
                     }
                 }))
                 .buffered(concurrency)
@@ -329,10 +360,7 @@ impl ScraperEngine {
             let chunk = chunk?;
             bytes.extend_from_slice(&chunk);
             if bytes.len() as u64 > limit {
-                return Err(anyhow::anyhow!(
-                    "response exceeded {} byte limit",
-                    limit
-                ));
+                return Err(anyhow::anyhow!("response exceeded {} byte limit", limit));
             }
         }
         let fetched = bytes.len() as u64;
@@ -363,8 +391,8 @@ impl ScraperEngine {
             if let Some(sel) = next_sel {
                 // ponytail: for JSON, the "next link" selector is a JSON path
                 // (e.g. "next_page" or "links/next") pointing at the next URL
-                if let Some(next_url) = extract_json_string(&json, sel)
-                    .and_then(|u| Self::resolve_next_url(&u, url))
+                if let Some(next_url) =
+                    extract_json_string(&json, sel).and_then(|u| Self::resolve_next_url(&u, url))
                 {
                     next_link = Some(next_url);
                 }
@@ -424,16 +452,28 @@ mod tests {
         fn new(prefix: &str) -> Self {
             Self(std::env::temp_dir().join(format!("ds_{prefix}_{}", uuid::Uuid::new_v4())))
         }
-        fn join(&self, child: &str) -> std::path::PathBuf { self.0.join(child) }
-        fn str_path(&self) -> &str { self.0.to_str().unwrap() }
+        fn join(&self, child: &str) -> std::path::PathBuf {
+            self.0.join(child)
+        }
+        fn str_path(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
     }
     impl Drop for TempDir {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn test_engine(tmp: &TempDir) -> (Arc<RwLock<Storage>>, ScraperEngine) {
         let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
-        let engine = ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into());
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            30,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
         (storage, engine)
     }
 
@@ -520,7 +560,10 @@ mod tests {
 
         assert_eq!(result.status, ScrapeStatus::Success);
         assert!(!result.data.is_empty(), "no JSON records extracted");
-        assert_eq!(result.data[0].get("title").map(|s| s.as_str()), Some("Post One"));
+        assert_eq!(
+            result.data[0].get("title").map(|s| s.as_str()),
+            Some("Post One")
+        );
         assert_eq!(result.data[0].get("userId").map(|s| s.as_str()), Some("1"));
     }
 
@@ -555,8 +598,7 @@ mod tests {
             .map(|v| v.as_str());
         assert_eq!(echoed, Some("world"));
         log::info!("echoed data: {:?}", result.data);
-
-}
+    }
 
     #[tokio::test]
     async fn json_pagination() {
@@ -594,8 +636,7 @@ mod tests {
             .collect();
         assert_eq!(ids[0], "1", "first record should be from page 1");
         assert_eq!(ids[10], "11", "tenth record should be from page 2");
-
-}
+    }
 
     #[tokio::test]
     async fn html_next_link_pagination() {
@@ -662,8 +703,7 @@ mod tests {
             Some("Author Two"),
             "tenth record should come from page 2"
         );
-
-}
+    }
 
     fn next_link_page_html(author: &str) -> String {
         let quote = format!(
@@ -744,10 +784,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("conc");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 2, 10, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            2,
+            10,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
 
         let mut job = demo_job();
         job.id = "conc-job-1".into();
@@ -769,16 +813,19 @@ mod tests {
             "global concurrency cap of 2 violated: peak {}",
             peak.load(Ordering::SeqCst)
         );
-
-}
+    }
 
     #[tokio::test]
     async fn stats_invariant_total_equals_success_plus_failed() {
         let tmp = TempDir::new("stats");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 2, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            2,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
 
         let mut bad = demo_job();
         bad.id = "stats-bad".into();
@@ -810,11 +857,16 @@ mod tests {
             stats.successful_requests,
             stats.failed_requests
         );
-        assert!(stats.successful_requests >= 1, "successes should be counted");
+        assert!(
+            stats.successful_requests >= 1,
+            "successes should be counted"
+        );
         assert!(stats.failed_requests >= 1, "failures should be counted");
-        assert!(stats.total_requests >= 2, "each page fetch should count as a request");
-
-}
+        assert!(
+            stats.total_requests >= 2,
+            "each page fetch should count as a request"
+        );
+    }
 
     #[tokio::test]
     async fn json_detected_via_sniffing() {
@@ -842,10 +894,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("sniff");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            10,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
 
         let mut job = demo_job();
         job.id = "sniff-job-1".into();
@@ -863,8 +919,7 @@ mod tests {
             Some("Sniffed"),
             "JSON body with text/plain content-type should be parsed as JSON"
         );
-
-}
+    }
 
     #[tokio::test]
     async fn duplicate_run_is_rejected() {
@@ -896,10 +951,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("dup");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = Arc::new(ScraperEngine::new(
+            storage.clone(),
+            4,
+            30,
+            "DataScraper/1.0".into(),
+            "exports".into(),
         ));
-        let engine = Arc::new(ScraperEngine::new(storage.clone(), 4, 30, "DataScraper/1.0".into(), "exports".into()));
 
         let mut job = demo_job();
         job.id = "dup-job-1".into();
@@ -923,8 +982,7 @@ mod tests {
 
         let first_result = first.await.unwrap().unwrap();
         assert_eq!(first_result.status, ScrapeStatus::Success);
-
-}
+    }
 
     #[tokio::test]
     async fn request_timeout_causes_failure() {
@@ -938,10 +996,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("timeout");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 1, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            1,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
 
         let mut job = demo_job();
         job.id = "timeout-job-1".into();
@@ -959,8 +1021,7 @@ mod tests {
         let saved = storage.read().await.get_all_results(10).await.unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].status, ScrapeStatus::Failed);
-
-}
+    }
 
     #[tokio::test]
     async fn user_agent_fallback_and_override() {
@@ -996,10 +1057,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("ua");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 10, "TestAgent/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            10,
+            "TestAgent/1.0".into(),
+            "exports".into(),
+        );
 
         let selector = crate::types::Selector {
             name: "ua".into(),
@@ -1030,8 +1095,7 @@ mod tests {
             Some("JobAgent/2.0"),
             "per-job UA should override the global default"
         );
-
-}
+    }
 
     #[tokio::test]
     async fn auto_export_writes_files_on_success() {
@@ -1106,7 +1170,11 @@ mod tests {
             "CSV columns must be sorted for stable exports: {}",
             csv_content
         );
-        assert!(csv_content.contains("One"), "CSV record missing: {}", csv_content);
+        assert!(
+            csv_content.contains("One"),
+            "CSV record missing: {}",
+            csv_content
+        );
 
         let json_path = export_dir.join(names.iter().find(|n| n.ends_with(".json")).unwrap());
         let json_content = std::fs::read_to_string(&json_path).unwrap();
@@ -1121,8 +1189,7 @@ mod tests {
         assert!(engine.run_job(bad).await.is_err());
         let count = std::fs::read_dir(&export_dir).unwrap().count();
         assert_eq!(count, 2, "failed runs must not write exports");
-
-}
+    }
 
     #[tokio::test]
     async fn partial_data_kept_when_page_fails() {
@@ -1160,10 +1227,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("partial");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            10,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
 
         let mut job = demo_job();
         job.id = "partial-job-1".into();
@@ -1193,8 +1264,7 @@ mod tests {
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].status, ScrapeStatus::Failed);
         assert_eq!(saved[0].data.len(), 2, "partial data must be persisted");
-
-}
+    }
 
     #[tokio::test]
     async fn json_next_link_pagination() {
@@ -1228,10 +1298,14 @@ mod tests {
         });
 
         let tmp = TempDir::new("jnext");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            10,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
 
         let mut job = demo_job();
         job.id = "jnext-job-1".into();
@@ -1246,11 +1320,14 @@ mod tests {
 
         let result = engine.run_job(job).await.unwrap();
         assert_eq!(result.status, ScrapeStatus::Success);
-        assert_eq!(result.data.len(), 2, "two pages via JSON next field expected");
+        assert_eq!(
+            result.data.len(),
+            2,
+            "two pages via JSON next field expected"
+        );
         assert_eq!(result.data[0].get("id").map(|s| s.as_str()), Some("1"));
         assert_eq!(result.data[1].get("id").map(|s| s.as_str()), Some("2"));
-
-}
+    }
 
     #[tokio::test]
     async fn response_body_over_limit_fails() {
@@ -1272,18 +1349,21 @@ mod tests {
                 }
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    len,
-                    body_str
+                    len, body_str
                 );
                 let _ = stream.write_all(resp.as_bytes());
             }
         });
 
         let tmp = TempDir::new("cap");
-        let storage = Arc::new(RwLock::new(
-            Storage::new(tmp.str_path()).unwrap(),
-        ));
-        let engine = ScraperEngine::new(storage.clone(), 4, 10, "DataScraper/1.0".into(), "exports".into());
+        let storage = Arc::new(RwLock::new(Storage::new(tmp.str_path()).unwrap()));
+        let engine = ScraperEngine::new(
+            storage.clone(),
+            4,
+            10,
+            "DataScraper/1.0".into(),
+            "exports".into(),
+        );
         engine.set_max_response_bytes(100);
 
         let mut job = demo_job();
@@ -1297,12 +1377,14 @@ mod tests {
 
         let err = engine.run_job(job).await.unwrap_err();
         assert!(err.to_string().contains("limit"), "{}", err);
-
-}
+    }
 
     #[test]
     fn test_resolve_next_url_empty_returns_none() {
-        assert_eq!(ScraperEngine::resolve_next_url("", "https://example.com"), None);
+        assert_eq!(
+            ScraperEngine::resolve_next_url("", "https://example.com"),
+            None
+        );
     }
 
     #[test]

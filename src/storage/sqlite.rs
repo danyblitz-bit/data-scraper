@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::NaiveDateTime;
-use rusqlite::{params, Connection};
+use parking_lot::Mutex;
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 use crate::types::{ScrapeJob, ScrapeResult, ScrapeStatus};
 
@@ -24,7 +24,9 @@ impl Storage {
         }
 
         let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536;",
+        )?;
 
         let storage = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -192,12 +194,7 @@ impl Storage {
                 url = excluded.url,
                 config = excluded.config,
                 updated_at = excluded.updated_at",
-            params![
-                job.id,
-                job.name,
-                job.url,
-                serde_json::to_string(job)?,
-            ],
+            params![job.id, job.name, job.url, serde_json::to_string(job)?,],
         )?;
         Ok(())
     }
@@ -231,8 +228,8 @@ impl Storage {
         let jobs = stmt
             .query_map([], |row| {
                 let config_str: String = row.get(0)?;
-                Ok(serde_json::from_str(&config_str).unwrap_or_else(|_| {
-                    ScrapeJob {
+                Ok(
+                    serde_json::from_str(&config_str).unwrap_or_else(|_| ScrapeJob {
                         id: String::new(),
                         name: "invalid".into(),
                         url: String::new(),
@@ -248,8 +245,8 @@ impl Storage {
                         user_agent: None,
                         auto_export: None,
                         enabled: false,
-                    }
-                }))
+                    }),
+                )
             })?
             .filter_map(|r| r.ok())
             .collect();
@@ -262,7 +259,9 @@ impl Storage {
             .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get::<_, i64>(0))
             .unwrap_or(0) as u64;
         let total_results: u64 = conn
-            .query_row("SELECT COUNT(*) FROM results", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM results", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap_or(0) as u64;
         let total_bytes: u64 = conn
             .query_row(
@@ -341,18 +340,20 @@ fn fnv1a64(input: &str) -> u64 {
 }
 
 fn canonical_hash(records: &[HashMap<String, String>]) -> String {
-    let mut map = serde_json::Map::new();
-    for record in records {
-        let mut keys: Vec<&String> = record.keys().collect();
-        keys.sort();
-        for k in keys {
-            map.insert(
-                k.clone(),
-                serde_json::Value::String(record[k].clone()),
-            );
-        }
-    }
-    fnv1a64(&serde_json::to_string(&map).unwrap_or_default()).to_string()
+    let canonical_records: Vec<serde_json::Value> = records
+        .iter()
+        .map(|record| {
+            let mut map = serde_json::Map::new();
+            let mut keys: Vec<&String> = record.keys().collect();
+            keys.sort();
+            for key in keys {
+                map.insert(key.clone(), serde_json::Value::String(record[key].clone()));
+            }
+            serde_json::Value::Object(map)
+        })
+        .collect();
+
+    fnv1a64(&serde_json::to_string(&canonical_records).unwrap_or_default()).to_string()
 }
 
 #[cfg(test)]
@@ -406,6 +407,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_records_with_same_keys_are_not_collapsed() {
+        let first = record(&[("id", "1")]);
+        let second = record(&[("id", "2")]);
+        assert_ne!(canonical_hash(&[first]), canonical_hash(&[second]));
+        assert_ne!(
+            canonical_hash(&[record(&[("id", "1")])]),
+            canonical_hash(&[record(&[("id", "1")]), record(&[("id", "2")])])
+        );
+    }
+
+    #[tokio::test]
     async fn test_identical_run_is_skipped() {
         let tmp = std::env::temp_dir().join(format!("ds_dedup_{}", uuid::Uuid::new_v4()));
         let mut s = Storage::new(tmp.to_str().unwrap()).unwrap();
@@ -434,7 +446,11 @@ mod tests {
             .await
             .unwrap();
         let all = s.get_all_results(10).await.unwrap();
-        assert_eq!(all.len(), 1, "same data with different map order must dedup");
+        assert_eq!(
+            all.len(),
+            1,
+            "same data with different map order must dedup"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -468,7 +484,7 @@ mod tests {
         s.save_result(&f).await.unwrap();
         s.save_result(&f).await.unwrap();
         let all = s.get_all_results(10).await.unwrap();
-        assert_eq!(all.len(), 2, "failure runs are always recorded");
+        assert_eq!(all.len(), 2, "failed empty runs must both be stored");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -496,7 +512,9 @@ mod tests {
         s.save_job(&job).await.unwrap();
         let conn = s.conn.lock();
         let created: String = conn
-            .query_row("SELECT created_at FROM jobs WHERE id = 'j5'", [], |r| r.get(0))
+            .query_row("SELECT created_at FROM jobs WHERE id = 'j5'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         drop(conn);
         job.name = "two".into();
@@ -504,7 +522,9 @@ mod tests {
         s.save_job(&job).await.unwrap();
         let conn = s.conn.lock();
         let created2: String = conn
-            .query_row("SELECT created_at FROM jobs WHERE id = 'j5'", [], |r| r.get(0))
+            .query_row("SELECT created_at FROM jobs WHERE id = 'j5'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(created, created2, "created_at must survive edits");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -545,9 +565,12 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("ds_meta_{}", uuid::Uuid::new_v4()));
         let mut s = Storage::new(tmp.to_str().unwrap()).unwrap();
         save_job_row(&s, "j6").await;
-        s.save_result(&make_result("j6", vec![record(&[("a", "1")]), record(&[("b", "2")])]))
-            .await
-            .unwrap();
+        s.save_result(&make_result(
+            "j6",
+            vec![record(&[("a", "1")]), record(&[("b", "2")])],
+        ))
+        .await
+        .unwrap();
 
         let meta = s.get_results_meta(10).await.unwrap();
         assert_eq!(meta.len(), 1);
@@ -576,7 +599,10 @@ mod tests {
         s.save_result(&r).await.unwrap();
 
         let meta = s.get_results_meta(10).await.unwrap();
-        assert_eq!(meta[0].timestamp, ts, "nanosecond timestamp must not degrade to 1970");
+        assert_eq!(
+            meta[0].timestamp, ts,
+            "nanosecond timestamp must not degrade to 1970"
+        );
         let full = s.get_result_by_id(meta[0].id).await.unwrap().unwrap();
         assert_eq!(full.timestamp, ts);
         let _ = std::fs::remove_dir_all(&tmp);

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 
-use crate::engine::{EngineStats, ScraperEngine, Scheduler};
-use crate::gui::{ResultsPanel, ScraperPanel, SettingsPanel};
+use crate::engine::{EngineStats, Scheduler, ScraperEngine};
 use crate::gui::scraper_panel::TestOutcome;
+use crate::gui::{ResultsPanel, ScraperPanel, SettingsPanel};
 use crate::storage::Storage;
 use crate::types::{AppConfig, ScrapeJob, ScrapeResult, Theme};
 
@@ -106,14 +106,24 @@ impl DataScraperApp {
     fn load_jobs_from_db(&mut self) {
         let storage = self.storage.clone();
         self.jobs = self.runtime.block_on(async {
-            storage.read().await.get_all_jobs().await.unwrap_or_default()
+            storage
+                .read()
+                .await
+                .get_all_jobs()
+                .await
+                .unwrap_or_default()
         });
     }
 
     pub fn refresh_results(&mut self) {
         let storage = self.storage.clone();
         self.results = self.runtime.block_on(async {
-            storage.read().await.get_results_meta(500).await.unwrap_or_default()
+            storage
+                .read()
+                .await
+                .get_results_meta(500)
+                .await
+                .unwrap_or_default()
         });
     }
 
@@ -218,7 +228,8 @@ impl eframe::App for DataScraperApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
         let entering_dashboard =
             self.current_view == AppView::Dashboard && self.current_view != self.last_view;
-        let entering_results = self.current_view == AppView::Results && self.current_view != self.last_view;
+        let entering_results =
+            self.current_view == AppView::Results && self.current_view != self.last_view;
         self.last_view = self.current_view.clone();
         if self.last_stats_refresh.elapsed() >= std::time::Duration::from_secs(1) {
             self.last_stats_refresh = std::time::Instant::now();
@@ -285,13 +296,17 @@ impl eframe::App for DataScraperApp {
                         AppView::Dashboard => {
                             use std::cell::RefCell;
                             if entering_dashboard
-                                || self.last_results_refresh.elapsed() >= std::time::Duration::from_secs(2)
+                                || self.last_results_refresh.elapsed()
+                                    >= std::time::Duration::from_secs(2)
                             {
                                 self.last_results_refresh = std::time::Instant::now();
                                 self.refresh_results();
                             }
-                            let job_names: Vec<(String, String)> =
-                                self.jobs.iter().map(|j| (j.id.clone(), j.name.clone())).collect();
+                            let job_names: Vec<(String, String)> = self
+                                .jobs
+                                .iter()
+                                .map(|j| (j.id.clone(), j.name.clone()))
+                                .collect();
                             let commands = RefCell::new(Vec::new());
                             crate::gui::show_dashboard(
                                 ui,
@@ -303,7 +318,9 @@ impl eframe::App for DataScraperApp {
                                 &job_names,
                                 &self.results,
                                 &mut || commands.borrow_mut().push(AppCommand::RunAllJobs),
-                                &mut |view| commands.borrow_mut().push(AppCommand::NavigateTo(view)),
+                                &mut |view| {
+                                    commands.borrow_mut().push(AppCommand::NavigateTo(view))
+                                },
                             );
                             for cmd in commands.into_inner() {
                                 match cmd {
@@ -327,7 +344,9 @@ impl eframe::App for DataScraperApp {
                                 ui,
                                 &mut self.jobs,
                                 &self.stats,
-                                &mut |job_id| commands.borrow_mut().push(AppCommand::RunJob(job_id)),
+                                &mut |job_id| {
+                                    commands.borrow_mut().push(AppCommand::RunJob(job_id))
+                                },
                                 &mut || commands.borrow_mut().push(AppCommand::RunAllJobs),
                                 &mut |job| commands.borrow_mut().push(AppCommand::TestJob(job)),
                             );
@@ -347,13 +366,17 @@ impl eframe::App for DataScraperApp {
                         AppView::Results => {
                             use std::cell::RefCell;
                             if entering_results
-                                || self.last_results_refresh.elapsed() >= std::time::Duration::from_secs(2)
+                                || self.last_results_refresh.elapsed()
+                                    >= std::time::Duration::from_secs(2)
                             {
                                 self.last_results_refresh = std::time::Instant::now();
                                 self.refresh_results();
                             }
-                            let job_names: Vec<(String, String)> =
-                                self.jobs.iter().map(|j| (j.id.clone(), j.name.clone())).collect();
+                            let job_names: Vec<(String, String)> = self
+                                .jobs
+                                .iter()
+                                .map(|j| (j.id.clone(), j.name.clone()))
+                                .collect();
                             let storage = self.storage.clone();
                             let runtime = self.runtime.clone();
                             let to_delete = RefCell::new(None);
@@ -376,12 +399,21 @@ impl eframe::App for DataScraperApp {
                             );
                             // lazy detail: fetch the full row only when the
                             // selection changes (local SQLite read, fast)
-                            let sel_id = self.results_panel.selected_result.and_then(|i| self.results.get(i)).map(|r| r.id);
+                            let sel_id = self
+                                .results_panel
+                                .selected_result
+                                .and_then(|i| self.results.get(i))
+                                .map(|r| r.id);
                             if sel_id != self.last_selected_id {
                                 self.last_selected_id = sel_id;
                                 self.selected_detail = match sel_id {
                                     Some(id) => self.runtime.block_on(async {
-                                        storage.read().await.get_result_by_id(id).await.unwrap_or(None)
+                                        storage
+                                            .read()
+                                            .await
+                                            .get_result_by_id(id)
+                                            .await
+                                            .unwrap_or(None)
                                     }),
                                     None => None,
                                 };
@@ -389,10 +421,18 @@ impl eframe::App for DataScraperApp {
                             if let Some((ids, fmt)) = export_req.into_inner() {
                                 let export_path = self.config.export_path.clone();
                                 let rows = self.runtime.block_on(async {
-                                    let all = storage.read().await.get_all_results(500).await.unwrap_or_default();
-                                    all.into_iter().filter(|r| ids.contains(&r.id)).collect::<Vec<_>>()
+                                    let all = storage
+                                        .read()
+                                        .await
+                                        .get_all_results(500)
+                                        .await
+                                        .unwrap_or_default();
+                                    all.into_iter()
+                                        .filter(|r| ids.contains(&r.id))
+                                        .collect::<Vec<_>>()
                                 });
-                                let path = crate::gui::results_panel::export_path_for(&export_path, &fmt);
+                                let path =
+                                    crate::gui::results_panel::export_path_for(&export_path, &fmt);
                                 let out = match fmt.as_str() {
                                     "csv" => crate::storage::export::export_to_csv(&rows, &path),
                                     _ => crate::storage::export::export_to_json(&rows, &path),

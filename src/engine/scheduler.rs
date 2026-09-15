@@ -49,7 +49,10 @@ impl Scheduler {
                     .retain(|id, _| jobs.iter().any(|j| j.id == *id));
 
                 let now = chrono::Utc::now().naive_utc();
-                for job in jobs.iter().filter(|j| j.enabled && j.interval_minutes.unwrap_or(0) > 0) {
+                for job in jobs
+                    .iter()
+                    .filter(|j| j.enabled && j.interval_minutes.unwrap_or(0) > 0)
+                {
                     let minutes = job.interval_minutes.unwrap_or(0) as i64;
                     let should_run = {
                         let mut map = last_runs.write().await;
@@ -86,7 +89,11 @@ impl Scheduler {
     }
 }
 
-fn is_due(last_run: chrono::NaiveDateTime, now: chrono::NaiveDateTime, interval_minutes: i64) -> bool {
+fn is_due(
+    last_run: chrono::NaiveDateTime,
+    now: chrono::NaiveDateTime,
+    interval_minutes: i64,
+) -> bool {
     last_run == chrono::NaiveDateTime::default()
         || (now - last_run).num_minutes() >= interval_minutes
 }

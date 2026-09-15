@@ -105,13 +105,16 @@ impl ScraperPanel {
                                 ui.horizontal(|ui| {
                                     ui.strong(&job.name);
                                     if stats.running_job_ids.contains(&job.id) {
-                                        ui.colored_label(Color32::from_rgb(241, 196, 15), "Running...");
+                                        ui.colored_label(
+                                            Color32::from_rgb(241, 196, 15),
+                                            "Running...",
+                                        );
                                     } else if let Some(last) = stats.last_runs.get(&job.id) {
                                         let (color, text) = match &last.status {
-                        ScrapeStatus::Success => (
-                        Color32::LIGHT_GREEN,
-                        format!("Last run: {} records", last.record_count),
-                    ),
+                                            ScrapeStatus::Success => (
+                                                Color32::LIGHT_GREEN,
+                                                format!("Last run: {} records", last.record_count),
+                                            ),
                                             ScrapeStatus::Failed => (
                                                 Color32::from_rgb(231, 76, 60),
                                                 "Last run: failed".to_string(),
@@ -122,17 +125,38 @@ impl ScraperPanel {
                                             ui.label(format!("({})", err));
                                         }
                                     }
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.add(egui::Button::new("Run").min_size(egui::vec2(24.0, 24.0))).clicked() {
-                                            job_to_run = Some(job.id.clone());
-                                        }
-                                        if ui.add(egui::Button::new("Edit").min_size(egui::vec2(24.0, 24.0))).clicked() {
-                                            job_to_edit = Some(i);
-                                        }
-                                        if ui.add(egui::Button::new("Delete").min_size(egui::vec2(24.0, 24.0))).clicked() {
-                                            job_to_delete = Some(i);
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new("Run")
+                                                        .min_size(egui::vec2(24.0, 24.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                job_to_run = Some(job.id.clone());
+                                            }
+                                            if ui
+                                                .add(
+                                                    egui::Button::new("Edit")
+                                                        .min_size(egui::vec2(24.0, 24.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                job_to_edit = Some(i);
+                                            }
+                                            if ui
+                                                .add(
+                                                    egui::Button::new("Delete")
+                                                        .min_size(egui::vec2(24.0, 24.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                job_to_delete = Some(i);
+                                            }
+                                        },
+                                    );
                                 });
                                 ui.add_space(4.0);
                                 ui.label(&job.url);
@@ -517,10 +541,6 @@ fn extract_combo(ui: &mut egui::Ui, id: String, extract: &mut ExtractType) {
             ui.selectable_value(extract, ExtractType::Html, "HTML");
             ui.selectable_value(extract, ExtractType::Link, "Link");
             ui.selectable_value(extract, ExtractType::Image, "Image");
-            ui.selectable_value(
-                extract,
-                ExtractType::Attribute(String::new()),
-                "Attribute",
-            );
+            ui.selectable_value(extract, ExtractType::Attribute(String::new()), "Attribute");
         });
 }

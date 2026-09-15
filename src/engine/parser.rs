@@ -72,15 +72,20 @@ pub fn find_next_link(html: &str, base_url: &str, css_selector: &str) -> Option<
     base.join(href).ok().map(|u| u.to_string())
 }
 
-fn extract_value(element: &scraper::ElementRef, sel: &crate::types::Selector, base_url: &str) -> String {
+fn extract_value(
+    element: &scraper::ElementRef,
+    sel: &crate::types::Selector,
+    base_url: &str,
+) -> String {
     match &sel.extract {
-        ExtractType::Text => element.text().collect::<Vec<_>>().join(" ").trim().to_string(),
-        ExtractType::Html => element.inner_html(),
-        ExtractType::Attribute(attr) => element
-            .value()
-            .attr(attr)
-            .unwrap_or("")
+        ExtractType::Text => element
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
             .to_string(),
+        ExtractType::Html => element.inner_html(),
+        ExtractType::Attribute(attr) => element.value().attr(attr).unwrap_or("").to_string(),
         ExtractType::Link => resolve_url(base_url, element.value().attr("href").unwrap_or("")),
         ExtractType::Image => resolve_url(base_url, element.value().attr("src").unwrap_or("")),
     }
@@ -102,7 +107,8 @@ pub fn parse_json(json_str: &str) -> Result<serde_json::Value> {
 }
 
 pub fn decode_body(bytes: &[u8], content_type: &str) -> String {
-    let (bom_enc, bom_len) = encoding_rs::Encoding::for_bom(bytes).unwrap_or((encoding_rs::UTF_8, 0));
+    let (bom_enc, bom_len) =
+        encoding_rs::Encoding::for_bom(bytes).unwrap_or((encoding_rs::UTF_8, 0));
     let enc = if bom_len > 0 {
         bom_enc
     } else {
@@ -139,11 +145,7 @@ fn sniff_meta_charset(bytes: &[u8]) -> Option<String> {
         .skip_while(|c| *c == '"' || *c == '\'')
         .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
         .collect();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 pub fn extract_json_string(value: &serde_json::Value, path: &str) -> Option<String> {
@@ -165,10 +167,7 @@ pub fn extract_json_string(value: &serde_json::Value, path: &str) -> Option<Stri
     }
 }
 
-pub fn extract_json_value(
-    value: &serde_json::Value,
-    path: &str,
-) -> Vec<HashMap<String, String>> {
+pub fn extract_json_value(value: &serde_json::Value, path: &str) -> Vec<HashMap<String, String>> {
     let mut results = Vec::new();
 
     // ponytail: empty path means "the whole document": arrays become one
@@ -192,15 +191,13 @@ pub fn extract_json_value(
                     return results;
                 }
             }
-            key => {
-                match current.as_object() {
-                    Some(obj) => match obj.get(key) {
-                        Some(v) => current = v,
-                        None => return Vec::new(),
-                    },
+            key => match current.as_object() {
+                Some(obj) => match obj.get(key) {
+                    Some(v) => current = v,
                     None => return Vec::new(),
-                }
-            }
+                },
+                None => return Vec::new(),
+            },
         }
     }
 
@@ -210,11 +207,7 @@ pub fn extract_json_value(
     results
 }
 
-fn flatten_json(
-    value: &serde_json::Value,
-    prefix: &str,
-    map: &mut HashMap<String, String>,
-) {
+fn flatten_json(value: &serde_json::Value, prefix: &str, map: &mut HashMap<String, String>) {
     match value {
         serde_json::Value::Object(obj) => {
             for (k, v) in obj {
@@ -320,13 +313,19 @@ mod tests {
 
         let result = parse_html(html, "https://site.example/catalog/", "job1", &selectors);
         assert_eq!(result.status, ScrapeStatus::Success);
-        assert_eq!(result.data[0].get("link").unwrap(), "https://site.example/product/1");
+        assert_eq!(
+            result.data[0].get("link").unwrap(),
+            "https://site.example/product/1"
+        );
         assert_eq!(
             result.data[0].get("img").unwrap(),
             "https://site.example/catalog/images/pic.jpg"
         );
         assert_eq!(result.data[1].get("link").unwrap(), "https://abs.example/x");
-        assert_eq!(result.data[1].get("img").unwrap(), "https://cdn.example.com/pic2.jpg");
+        assert_eq!(
+            result.data[1].get("img").unwrap(),
+            "https://cdn.example.com/pic2.jpg"
+        );
     }
 
     #[test]
@@ -345,9 +344,13 @@ mod tests {
 
     #[test]
     fn test_decode_body_sniffs_html_meta_charset() {
-        let bytes = b"<html><head><meta charset=\"windows-1252\"></head><body>caf\xE9</body></html>";
+        let bytes =
+            b"<html><head><meta charset=\"windows-1252\"></head><body>caf\xE9</body></html>";
         let text = decode_body(bytes, "text/html");
-        assert_eq!(text, "<html><head><meta charset=\"windows-1252\"></head><body>café</body></html>");
+        assert_eq!(
+            text,
+            "<html><head><meta charset=\"windows-1252\"></head><body>café</body></html>"
+        );
     }
 
     #[test]
@@ -412,7 +415,10 @@ mod tests {
             css_selector: "p".into(),
             extract: ExtractType::Html,
         };
-        assert_eq!(extract_value(&element, &s, "https://example.com"), "Hello <b>world</b>");
+        assert_eq!(
+            extract_value(&element, &s, "https://example.com"),
+            "Hello <b>world</b>"
+        );
     }
 
     #[test]
@@ -470,6 +476,13 @@ mod tests {
 
     #[test]
     fn test_find_next_link_invalid_css_returns_none() {
-        assert_eq!(find_next_link("<a href=\"/next\">go</a>", "https://example.com", "!!!bad!!!"), None);
+        assert_eq!(
+            find_next_link(
+                "<a href=\"/next\">go</a>",
+                "https://example.com",
+                "!!!bad!!!"
+            ),
+            None
+        );
     }
 }

@@ -77,10 +77,7 @@ impl SettingsPanel {
 
         ui.label("Max Response Size (MB):");
         let mut mb = (config.max_response_bytes / (1024 * 1024)) as i32;
-        if ui
-            .add(Slider::new(&mut mb, 1..=2048).text("MB"))
-            .changed()
-        {
+        if ui.add(Slider::new(&mut mb, 1..=2048).text("MB")).changed() {
             config.max_response_bytes = mb.max(1) as u64 * 1024 * 1024;
             self.changed = true;
         }

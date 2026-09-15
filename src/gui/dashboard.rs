@@ -1,6 +1,6 @@
-use eframe::egui::{self, Color32, Frame, Margin, Stroke, Vec2};
 use crate::engine::EngineStats;
 use crate::types::ScrapeResult;
+use eframe::egui::{self, Color32, Frame, Margin, Stroke, Vec2};
 
 #[derive(Clone)]
 pub struct StatCard {
@@ -43,13 +43,41 @@ pub fn show_dashboard(
         format!("{:.0} ms", avg_duration_ms)
     };
     let cards = vec![
-        StatCard::new("Total Jobs", &total_jobs.to_string(), Color32::from_rgb(52, 152, 219)),
-        StatCard::new("Total Results", &total_results.to_string(), Color32::from_rgb(46, 204, 113)),
-        StatCard::new("Active Jobs", &stats.active_jobs.to_string(), Color32::from_rgb(155, 89, 182)),
-        StatCard::new("Successful Requests", &stats.successful_requests.to_string(), Color32::from_rgb(39, 174, 96)),
-        StatCard::new("Failed Requests", &stats.failed_requests.to_string(), Color32::from_rgb(231, 76, 60)),
-        StatCard::new("Total Decoded Data", &format_bytes(total_bytes), Color32::from_rgb(243, 156, 18)),
-        StatCard::new("Avg Run Duration", &avg_label, Color32::from_rgb(26, 188, 156)),
+        StatCard::new(
+            "Total Jobs",
+            &total_jobs.to_string(),
+            Color32::from_rgb(52, 152, 219),
+        ),
+        StatCard::new(
+            "Total Results",
+            &total_results.to_string(),
+            Color32::from_rgb(46, 204, 113),
+        ),
+        StatCard::new(
+            "Active Jobs",
+            &stats.active_jobs.to_string(),
+            Color32::from_rgb(155, 89, 182),
+        ),
+        StatCard::new(
+            "Successful Requests",
+            &stats.successful_requests.to_string(),
+            Color32::from_rgb(39, 174, 96),
+        ),
+        StatCard::new(
+            "Failed Requests",
+            &stats.failed_requests.to_string(),
+            Color32::from_rgb(231, 76, 60),
+        ),
+        StatCard::new(
+            "Total Decoded Data",
+            &format_bytes(total_bytes),
+            Color32::from_rgb(243, 156, 18),
+        ),
+        StatCard::new(
+            "Avg Run Duration",
+            &avg_label,
+            Color32::from_rgb(26, 188, 156),
+        ),
     ];
 
     let narrow = ui.available_width() < 700.0;
@@ -85,16 +113,28 @@ pub fn show_dashboard(
     ui.heading("Quick Actions");
     if narrow {
         ui.vertical(|ui| {
-            if ui.add(egui::Button::new("Run All Jobs").min_size(egui::vec2(24.0, 24.0))).clicked() {
+            if ui
+                .add(egui::Button::new("Run All Jobs").min_size(egui::vec2(24.0, 24.0)))
+                .clicked()
+            {
                 on_run_all();
             }
-            if ui.add(egui::Button::new("Scraper Jobs").min_size(egui::vec2(24.0, 24.0))).clicked() {
+            if ui
+                .add(egui::Button::new("Scraper Jobs").min_size(egui::vec2(24.0, 24.0)))
+                .clicked()
+            {
                 on_navigate(crate::app::AppView::Scraper);
             }
-            if ui.add(egui::Button::new("Results").min_size(egui::vec2(24.0, 24.0))).clicked() {
+            if ui
+                .add(egui::Button::new("Results").min_size(egui::vec2(24.0, 24.0)))
+                .clicked()
+            {
                 on_navigate(crate::app::AppView::Results);
             }
-            if ui.add(egui::Button::new("Settings").min_size(egui::vec2(24.0, 24.0))).clicked() {
+            if ui
+                .add(egui::Button::new("Settings").min_size(egui::vec2(24.0, 24.0)))
+                .clicked()
+            {
                 on_navigate(crate::app::AppView::Settings);
             }
         });
@@ -120,10 +160,7 @@ pub fn show_dashboard(
     ui.add_space(10.0);
     ui.heading("Recent Results");
     if recent.is_empty() {
-        ui.colored_label(
-            Color32::GRAY,
-            "No results yet - run a job to get started",
-        );
+        ui.colored_label(Color32::GRAY, "No results yet - run a job to get started");
     } else {
         for r in recent.iter().take(5) {
             let job_name = job_names
@@ -151,7 +188,7 @@ fn show_stat_card(ui: &mut egui::Ui, card: &StatCard) {
         .show(ui, |ui| {
             ui.set_min_size(Vec2::new(160.0, 60.0));
             ui.vertical_centered(|ui| {
-                    ui.label(&card.label);
+                ui.label(&card.label);
                 ui.add_space(4.0);
                 ui.colored_label(card.color, &card.value);
             });

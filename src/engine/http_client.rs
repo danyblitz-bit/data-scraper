@@ -2,8 +2,8 @@ use anyhow::Result;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT},
     Client, ClientBuilder, Proxy, Response,
+    header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT},
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -35,10 +35,7 @@ fn build_client(
         HeaderValue::from_str(user_agent.unwrap_or("DataScraper/1.0"))?,
     );
     headers.insert("Accept", HeaderValue::from_str("*/*")?);
-    headers.insert(
-        "Accept-Language",
-        HeaderValue::from_str("en-US,en;q=0.9")?,
-    );
+    headers.insert("Accept-Language", HeaderValue::from_str("en-US,en;q=0.9")?);
     builder = builder.default_headers(headers);
 
     if let Some(proxy_url) = proxy {
@@ -52,19 +49,14 @@ pub fn get_client(
     proxy: Option<&str>,
     user_agent: Option<&str>,
     timeout_secs: u64,
-) -> Client {
+) -> Result<Client> {
     let key = format!("{:?}|{:?}|{}", proxy, user_agent, timeout_secs);
     if let Some(client) = CLIENT_POOL.get(&key) {
-        return client.clone();
+        return Ok(client.clone());
     }
-    if let Ok(client) = build_client(proxy, user_agent, timeout_secs) {
-        CLIENT_POOL.insert(key.clone(), client.clone());
-        return client;
-    }
-    CLIENT_POOL
-        .get(&key)
-        .map(|c| c.clone())
-        .unwrap_or_else(|| ClientBuilder::new().build().unwrap())
+    let client = build_client(proxy, user_agent, timeout_secs)?;
+    CLIENT_POOL.insert(key, client.clone());
+    Ok(client)
 }
 
 pub async fn fetch_url(
@@ -76,7 +68,7 @@ pub async fn fetch_url(
     body: Option<&str>,
     headers: &HashMap<String, String>,
 ) -> Result<Response> {
-    let client = get_client(proxy, user_agent, timeout_secs);
+    let client = get_client(proxy, user_agent, timeout_secs)?;
 
     let mut request = match method {
         HttpMethod::Get => client.get(url),
@@ -152,7 +144,8 @@ pub async fn fetch_url_with_retry(
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Request failed after {} retries", max_retries)))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("Request failed after {} retries", max_retries)))
 }
 
 // ponytail: ±30% jitter breaks the thundering herd; Retry-After capped at 60s
@@ -175,7 +168,11 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn spawn_status_server(status: &'static str, headers: &'static str, count: Arc<AtomicUsize>) -> std::net::SocketAddr {
+    fn spawn_status_server(
+        status: &'static str,
+        headers: &'static str,
+        count: Arc<AtomicUsize>,
+    ) -> std::net::SocketAddr {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
@@ -383,12 +380,9 @@ mod tests {
     #[test]
     fn test_get_client_caches_same_params() {
         let ua = format!("TestClient/{}", uuid::Uuid::new_v4());
-        let _c1 = get_client(None, Some(&ua), 10);
-        let _c2 = get_client(None, Some(&ua), 10);
-        let ours = CLIENT_POOL
-            .iter()
-            .filter(|e| e.key().contains(&ua))
-            .count();
+        let _c1 = get_client(None, Some(&ua), 10).unwrap();
+        let _c2 = get_client(None, Some(&ua), 10).unwrap();
+        let ours = CLIENT_POOL.iter().filter(|e| e.key().contains(&ua)).count();
         assert_eq!(ours, 1, "same params should reuse one pool entry");
     }
 }

@@ -41,12 +41,18 @@ impl ResultsPanel {
                 }
             }
             if self.selected_job_filter.is_some() {
-                if ui.add(egui::Button::new("Clear filter").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                if ui
+                    .add(egui::Button::new("Clear filter").min_size(egui::vec2(24.0, 24.0)))
+                    .clicked()
+                {
                     self.selected_job_filter = None;
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add(egui::Button::new("Clear Results").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                if ui
+                    .add(egui::Button::new("Clear Results").min_size(egui::vec2(24.0, 24.0)))
+                    .clicked()
+                {
                     on_clear();
                 }
             });
@@ -82,7 +88,9 @@ impl ResultsPanel {
                 let q = self.search_query.to_lowercase();
                 r.url.to_lowercase().contains(&q)
                     || r.job_id.to_lowercase().contains(&q)
-                    || crate::gui::fmt_local(&r.timestamp).to_lowercase().contains(&q)
+                    || crate::gui::fmt_local(&r.timestamp)
+                        .to_lowercase()
+                        .contains(&q)
             })
             .collect();
 
@@ -95,11 +103,17 @@ impl ResultsPanel {
                 total_records
             ));
             if !filtered.is_empty() {
-                if ui.add(egui::Button::new("Export CSV").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                if ui
+                    .add(egui::Button::new("Export CSV").min_size(egui::vec2(24.0, 24.0)))
+                    .clicked()
+                {
                     let ids: Vec<i64> = filtered.iter().map(|r| r.id).collect();
                     on_export(ids, "csv".to_string());
                 }
-                if ui.add(egui::Button::new("Export JSON").min_size(egui::vec2(24.0, 24.0))).clicked() {
+                if ui
+                    .add(egui::Button::new("Export JSON").min_size(egui::vec2(24.0, 24.0)))
+                    .clicked()
+                {
                     let ids: Vec<i64> = filtered.iter().map(|r| r.id).collect();
                     on_export(ids, "json".to_string());
                 }
@@ -145,11 +159,20 @@ impl ResultsPanel {
                                 }
                                 ui.separator();
                                 ui.label(crate::gui::fmt_local(&result.timestamp));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.add(egui::Button::new("Delete").min_size(egui::vec2(24.0, 24.0))).clicked() {
-                                        to_delete = Some(result.id);
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .add(
+                                                egui::Button::new("Delete")
+                                                    .min_size(egui::vec2(24.0, 24.0)),
+                                            )
+                                            .clicked()
+                                        {
+                                            to_delete = Some(result.id);
+                                        }
+                                    },
+                                );
                             });
                             if is_selected {
                                 ui.add_space(4.0);
@@ -162,17 +185,15 @@ impl ResultsPanel {
                                     if !full.data.is_empty() {
                                         ui.add_space(4.0);
                                         let first = &full.data[0];
-                    let mut table = egui::Grid::new(format!("table_{}", i))
-                        .striped(true)
-                        .min_col_width(120.0);
-                    let keys: Vec<&String> = first.keys().collect();
-                    for key in &keys {
-                        table = table.min_col_width(
-                            180.0_f32.max(
-                                key.len() as f32 * 8.0
-                            ),
-                        );
-                    }
+                                        let mut table = egui::Grid::new(format!("table_{}", i))
+                                            .striped(true)
+                                            .min_col_width(120.0);
+                                        let keys: Vec<&String> = first.keys().collect();
+                                        for key in &keys {
+                                            table = table.min_col_width(
+                                                180.0_f32.max(key.len() as f32 * 8.0),
+                                            );
+                                        }
                                         table.show(ui, |ui| {
                                             for key in &keys {
                                                 ui.strong(*key);
@@ -194,7 +215,10 @@ impl ResultsPanel {
                                             if full.data.len() > max_rows {
                                                 ui.colored_label(
                                                     Color32::GRAY,
-                                                    format!("... and {} more rows", full.data.len() - max_rows),
+                                                    format!(
+                                                        "... and {} more rows",
+                                                        full.data.len() - max_rows
+                                                    ),
                                                 );
                                             }
                                         });
