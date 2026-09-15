@@ -80,6 +80,10 @@ Settings are stored in `data_scraper.yaml` next to the executable. You can adjus
 | Storage | SQLite (rusqlite, bundled) |
 | Serialization | serde + serde_yaml + serde_json |
 
+## Support the Project
+
+DataScraper is free and open source. If it saves you time, consider a [pay-what-you-want contribution](https://danyblitz.gumroad.com) to support development.
+
 ## License
 
 MIT
