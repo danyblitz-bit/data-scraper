@@ -88,6 +88,16 @@ DataScraper is free and open source. If it saves you time:
 - [Get Pro Support](https://danyblitz.gumroad.com/l/tmdwqj) — 30-min dedicated help with setup
 - [Buy me a coffee](https://danyblitz.gumroad.com/l/hrvpiu) — one-time support
 
+## Report a bug
+
+Found a bug or something weird? Email **danyblitz@googlemail.com** directly. Use the subject format:
+
+```
+[TOOL-REPORT] data-scraper <what happened>
+```
+
+Attach the error message, a screenshot, and the `data_scraper.yaml` config if you have them. Reports are received automatically and a fix usually follows quickly.
+
 ## License
 
 MIT
