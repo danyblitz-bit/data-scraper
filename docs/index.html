@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataScraper — High-Performance Web Scraper for Windows</title>
+<meta name="description" content="DataScraper is a free, high-performance desktop web scraper for Windows. Extract structured data with CSS selectors, schedule recurring jobs, export to CSV/JSON.">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #e6edf3; line-height: 1.6; }
+  .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 80px 0 40px; text-align: center; }
+  header h1 { font-size: 3rem; background: linear-gradient(135deg, #58a6ff, #f0883e); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  header p { font-size: 1.2rem; color: #8b949e; max-width: 600px; margin: 16px auto; }
+  .badge { display: inline-block; background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 4px 12px; margin: 4px; font-size: 0.85rem; color: #8b949e; }
+  .cta { margin-top: 32px; }
+  .btn { display: inline-block; background: #238636; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 1.1rem; font-weight: 600; }
+  .btn:hover { background: #2ea043; }
+  .btn.secondary { background: #1f6feb; margin-left: 12px; }
+  .btn.secondary:hover { background: #388bfd; }
+  .features { padding: 60px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 28px; }
+  .card h3 { color: #58a6ff; margin-bottom: 12px; }
+  .card p { color: #8b949e; font-size: 0.95rem; }
+  section h2 { margin: 40px 0 24px; color: #f0883e; font-size: 1.6rem; }
+  code { background: #21262d; padding: 2px 8px; border-radius: 4px; color: #79c0ff; font-size: 0.9em; }
+  .usage-steps { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 32px; }
+  .usage-steps ol { padding-left: 20px; color: #8b949e; }
+  .usage-steps li { margin-bottom: 12px; }
+  footer { padding: 40px 0; text-align: center; color: #484f58; font-size: 0.85rem; border-top: 1px solid #21262d; margin-top: 60px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>DataScraper</h1>
+    <p>Extract structured data from any website. CSS selectors, scheduling, concurrency, and CSV/JSON export — in a free, native Windows app.</p>
+    <div>
+      <span class="badge">Windows</span>
+      <span class="badge">Rust + eframe</span>
+      <span class="badge">Open Source</span>
+      <span class="badge">MIT License</span>
+    </div>
+    <div class="cta">
+      <a class="btn" href="https://github.com/danyblitz-bit/data-scraper/releases/latest" download>Download for Windows</a>
+      <a class="btn secondary" href="https://github.com/danyblitz-bit/data-scraper">View on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <section class="features">
+    <div class="card">
+      <h3>CSS Selector Extraction</h3>
+      <p>Pull text, HTML, attributes, links, and images from any page using standard CSS selectors you already know.</p>
+    </div>
+    <div class="card">
+      <h3>Recurring Schedules</h3>
+      <p>Set interval-based jobs to keep your data fresh automatically. Perfect for price tracking and monitoring.</p>
+    </div>
+    <div class="card">
+      <h3>CSV & JSON Export</h3>
+      <p>Auto-export results in industry-standard formats. Everything stores locally in SQLite — zero cloud lock-in.</p>
+    </div>
+    <div class="card">
+      <h3>Concurrent & Fast</h3>
+      <p>Rust-powered parallelism with throttle controls. Built-in retry, pagination following, and proxy support.</p>
+    </div>
+    <div class="card">
+      <h3>No Setup, No Cloud</h3>
+      <p>Single 17 MB executable. No installation, no account, no subscriptions. Your data stays on your machine.</p>
+    </div>
+    <div class="card">
+      <h3>Dark / Light / System</h3>
+      <p>A native, responsive interface that matches your Windows theme. Import/export job configs as YAML.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quick Start</h2>
+    <div class="usage-steps">
+      <ol>
+        <li>Download the latest <code>data-scraper.exe</code> from <a href="https://github.com/danyblitz-bit/data-scraper/releases/latest" style="color:#58a6ff">Releases</a>.</li>
+        <li>Open the <strong>Scraper</strong> tab and click <strong>+ New Job</strong>.</li>
+        <li>Enter a URL and add CSS selectors for the data fields you need.</li>
+        <li>Hit <strong>Test</strong> to preview, then <strong>Run</strong> to scrape.</li>
+        <li>Results land in the <strong>Results</strong> tab — export to CSV or JSON anytime.</li>
+      </ol>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="container">
+    DataScraper is free and open source (MIT). Built with Rust, eframe, and Tokio.<br>
+    <a href="https://github.com/danyblitz-bit/data-scraper" style="color:#8b949e">GitHub</a> &nbsp;·&nbsp;
+    <a href="https://github.com/danyblitz-bit/data-scraper/blob/main/README.md" style="color:#8b949e">Documentation</a>
+  </div>
+</footer>
+</body>
+</html>
